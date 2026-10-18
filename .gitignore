@@ -6,7 +6,7 @@ venv/
 .env
 data/
 demo_data/
-weights/**/*.pt
-!weights/.gitkeep
+# Trained weights in weights/ are shipped with the repo (float16, see scripts/export_weights.py).
 *.egg-info/
 .DS_Store
+reports/
