@@ -58,11 +58,11 @@ def apply_window(scan: Scan, profile) -> None:
 
 def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_uncertainty: float, profile) -> list[str]:
     reasons = []
-    if route.method != "user" and route.confidence < 0.6:
+    if route.method != "user" and route.confidence < 0.7:
         reasons.append(f"Scan type was guessed with low confidence ({route.confidence:.0%}); please confirm it.")
     if cls.method == "heuristic" or seg.method == "heuristic":
         reasons.append("Demo mode: at least one step used the heuristic detector instead of a trained model.")
-    if cls.confidence < 0.6 or (cls.mc_std or 0.0) > 0.15:
+    if cls.confidence < settings.min_confidence or (cls.mc_std or 0.0) > settings.max_mc_std:
         reasons.append(f"Classifier is unsure (confidence {cls.confidence:.0%}).")
     if lesion_uncertainty > settings.review_threshold:
         reasons.append(f"Tumor boundary is uncertain (mean uncertainty {lesion_uncertainty:.2f}).")

@@ -21,7 +21,7 @@ from huggingface_hub import snapshot_download
 snapshot_download("BJyotibrat/Masoud-Nickparvar-Brain-Tumor-MRI-Dataset", repo_type="dataset", local_dir="data/brain")
 snapshot_download("theshoaibme/panorgan-busi-breast-ultrasound", repo_type="dataset", local_dir="data/busi")
 EOF
-python scripts/prepare_figshare.py --download --raw data/figshare_raw --out data/figshare
+python scripts/prepare_figshare.py --download --raw data/figshare_raw --out data/figshare --negatives data/brain/Training/notumor
 ```
 
 For lung CT, download LIDC-IDRI volumes with nodule masks (see [DATASETS.md](DATASETS.md)) and convert them:

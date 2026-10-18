@@ -13,7 +13,7 @@ The "<patient>__" prefix lets the trainer split train/validation by patient.
 
 Usage:
     pip install pyarrow huggingface_hub
-    python scripts/prepare_figshare.py --download --out data/figshare
+    python scripts/prepare_figshare.py --download --out data/figshare --negatives data/brain/Training/notumor
     python -m oncovision.training.train_segmenter --profile brain_mri --format maskfolder \\
         --data data/figshare/train/images --masks data/figshare/train/masks
 """
@@ -29,6 +29,13 @@ def main() -> None:
     parser.add_argument("--raw", type=Path, default=Path("data/figshare_raw"), help="Folder with the downloaded parquet files")
     parser.add_argument("--out", type=Path, default=Path("data/figshare"))
     parser.add_argument("--download", action="store_true", help="Download the dataset from Hugging Face first")
+    parser.add_argument(
+        "--negatives",
+        type=Path,
+        help="Folder of tumor-free brain MRIs (e.g. data/brain/Training/notumor). They are added to train/ with "
+        "empty masks so the segmenter learns that a scan can contain no tumor. Strongly recommended.",
+    )
+    parser.add_argument("--max-negatives", type=int, default=800)
     args = parser.parse_args()
 
     import pyarrow.parquet as pq
@@ -53,6 +60,16 @@ def main() -> None:
             (args.out / split / "masks" / name).write_bytes(row["mask"]["bytes"])
             counts[split] = counts.get(split, 0) + 1
         print(f"{f.name}: done")
+    if args.negatives:
+        from PIL import Image
+
+        files = sorted(p for p in args.negatives.rglob("*") if p.suffix.lower() in (".jpg", ".jpeg", ".png"))[: args.max_negatives]
+        for f in files:
+            img = Image.open(f).convert("L")
+            name = f"neg-{f.stem}__0.png"  # each negative is its own "patient" group
+            img.save(args.out / "train" / "images" / name)
+            Image.new("L", img.size, 0).save(args.out / "train" / "masks" / name)
+        counts["negatives"] = len(files)
     print(f"Wrote {counts} slices to {args.out.resolve()}")
 
 

@@ -32,8 +32,13 @@ class Settings:
     llm_model: str = os.environ.get("ONCOVISION_LLM_MODEL", "claude-opus-5-5")
     # Monte-Carlo dropout passes used for uncertainty estimation.
     mc_samples: int = int(os.environ.get("ONCOVISION_MC_SAMPLES", "8"))
-    # Mean uncertainty (0-1) above which a result is flagged for expert review.
-    review_threshold: float = float(os.environ.get("ONCOVISION_REVIEW_THRESHOLD", "0.25"))
+    # Mean boundary uncertainty (0-1) above which a result is flagged for expert review.
+    # Calibrated on held-out brain MRIs: real tumors median ~0.24, false outlines ~0.6.
+    review_threshold: float = float(os.environ.get("ONCOVISION_REVIEW_THRESHOLD", "0.45"))
+    # Classifier results below this confidence, or with a Monte-Carlo dropout spread
+    # above max_mc_std, are flagged (wrong predictions sat at 0.59-0.64 / >0.06 in validation).
+    min_confidence: float = float(os.environ.get("ONCOVISION_MIN_CONFIDENCE", "0.70"))
+    max_mc_std: float = float(os.environ.get("ONCOVISION_MAX_MC_STD", "0.05"))
     max_upload_mb: int = int(os.environ.get("ONCOVISION_MAX_UPLOAD_MB", "512"))
     device: str = os.environ.get("ONCOVISION_DEVICE", "auto")
 

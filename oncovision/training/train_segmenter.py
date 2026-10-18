@@ -88,6 +88,7 @@ def main() -> None:
     parser.add_argument("--val-fraction", type=float, default=0.15)
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--max-items", type=int)
+    parser.add_argument("--init", type=Path, help="Start from an existing checkpoint (fine-tuning)")
     args = parser.parse_args()
 
     seed_everything()
@@ -125,6 +126,9 @@ def main() -> None:
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, drop_last=len(train_ds) > args.batch_size)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=args.workers)
     model = UNet(in_channels=len(channels), num_classes=len(label_indices), base=args.base).to(device)
+    if args.init:
+        model.load_state_dict(torch.load(args.init, map_location=device, weights_only=True)["state_dict"])
+        print(f"initialized from {args.init}")
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     ce = nn.CrossEntropyLoss()
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
