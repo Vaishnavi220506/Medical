@@ -1,0 +1,332 @@
+"""Loads trained weights and runs routing, segmentation and classification.
+
+Weights live under ``weights/``::
+
+    weights/router.pt
+    weights/<profile>/classifier.pt
+    weights/<profile>/segmenter.pt
+
+Each checkpoint is ``{"state_dict": ..., "meta": {...}}`` as written by the
+training scripts. Any missing model falls back to the heuristic demo mode for
+that step only, so you can e.g. train just the brain classifier first.
+"""
+
+from __future__ import annotations
+
+import logging
+import math
+from dataclasses import dataclass, field
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn.functional as F
+from scipy import ndimage
+
+from ..imaging.io import Scan
+from ..imaging.preprocess import foreground_mask, normalize, resize2d
+from . import heuristic
+from .networks import Classifier, UNet, enable_mc_dropout, grad_cam
+from .registry import PROFILES, ROUTER_CLASSES, CancerProfile
+
+log = logging.getLogger(__name__)
+
+MAX_CAM_SLICES = 48
+BATCH = 16
+
+
+@dataclass
+class RouteResult:
+    profile: str | None
+    confidence: float
+    method: str
+    probabilities: dict[str, float] = field(default_factory=dict)
+    reason: str = ""
+
+
+@dataclass
+class Classification:
+    method: str
+    label: str
+    display: str
+    probabilities: dict[str, float]
+    confidence: float
+    uncertainty: float  # normalized predictive entropy, 0 (certain) .. 1 (uniform)
+    mc_std: float | None = None
+    slices_used: list[int] = field(default_factory=list)
+
+
+@dataclass
+class Segmentation:
+    method: str
+    labels: np.ndarray  # (Z, H, W) uint8 label map
+    uncertainty: np.ndarray  # (Z, H, W) float32 in [0, 1]
+    saliency: np.ndarray | None = None  # heuristic contrast map, reused as demo heatmap
+
+
+def _pick_device(pref: str) -> torch.device:
+    if pref != "auto":
+        return torch.device(pref)
+    if torch.cuda.is_available():
+        return torch.device("cuda")
+    if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _entropy(p: np.ndarray, axis: int) -> np.ndarray:
+    k = p.shape[axis]
+    return -(p * np.log(np.clip(p, 1e-8, 1))).sum(axis=axis) / math.log(k)
+
+
+def channel_stack(scan: Scan, names: tuple[str, ...]) -> np.ndarray:
+    """Normalized (C, Z, H, W) input; missing sequences are filled with the primary one."""
+    fallback = normalize(scan.primary())
+    if names == ("image",):
+        return fallback[None]
+    return np.stack([normalize(scan.channels[n]) if n in scan.channels else fallback for n in names])
+
+
+class Engine:
+    def __init__(self, weights_dir: Path, device: str = "auto", mc_samples: int = 8):
+        self.weights_dir = Path(weights_dir)
+        self.device = _pick_device(device)
+        self.mc_samples = max(1, mc_samples)
+        self.router: tuple[Classifier, dict] | None = None
+        self.classifiers: dict[str, tuple[Classifier, dict]] = {}
+        self.segmenters: dict[str, tuple[UNet, dict]] = {}
+        self.reload()
+
+    # ------------------------------------------------------------------ loading
+    def _load(self, path: Path, build):
+        if not path.is_file():
+            return None
+        try:
+            ckpt = torch.load(path, map_location="cpu", weights_only=True)
+            meta = ckpt.get("meta", {})
+            model = build(meta)
+            model.load_state_dict(ckpt["state_dict"])
+            model.to(self.device).eval()
+            log.info("Loaded %s", path)
+            return model, meta
+        except Exception:
+            log.exception("Failed to load %s; using demo mode for it", path)
+            return None
+
+    def reload(self) -> None:
+        self.router = self._load(
+            self.weights_dir / "router.pt",
+            lambda m: Classifier(num_classes=len(m.get("classes", ROUTER_CLASSES))),
+        )
+        self.classifiers, self.segmenters = {}, {}
+        for key, profile in PROFILES.items():
+            clf = self._load(
+                self.weights_dir / key / "classifier.pt",
+                lambda m, p=profile: Classifier(num_classes=len(m.get("classes", p.classes))),
+            )
+            if clf:
+                self.classifiers[key] = clf
+            seg = self._load(
+                self.weights_dir / key / "segmenter.pt",
+                lambda m, p=profile: UNet(
+                    in_channels=len(m.get("channels", p.seg_channels)),
+                    num_classes=m.get("num_classes", p.num_seg_classes),
+                    base=m.get("base", 32),
+                ),
+            )
+            if seg:
+                self.segmenters[key] = seg
+
+    def status(self) -> dict:
+        out = {"device": str(self.device), "router": self.router is not None, "profiles": {}}
+        for key in PROFILES:
+            clf, seg = self.classifiers.get(key), self.segmenters.get(key)
+            out["profiles"][key] = {
+                "classifier": clf is not None,
+                "segmenter": seg is not None,
+                "classifier_metrics": clf[1].get("metrics", {}) if clf else {},
+                "segmenter_metrics": seg[1].get("metrics", {}) if seg else {},
+            }
+        return out
+
+    @property
+    def demo_mode(self) -> bool:
+        return not self.classifiers and not self.segmenters
+
+    # ------------------------------------------------------------------ routing
+    def route(self, scan: Scan) -> RouteResult:
+        if self.router is not None:
+            model, meta = self.router
+            classes = meta.get("classes", list(ROUTER_CLASSES))
+            size = meta.get("image_size", 224)
+            vol = normalize(scan.primary())
+            idx = int(np.argmax([foreground_mask(s).sum() for s in vol])) if vol.shape[0] > 1 else 0
+            x = torch.from_numpy(resize2d(vol[idx], (size, size))[None, None].copy()).float().to(self.device)
+            with torch.no_grad():
+                probs = torch.softmax(model(x), dim=1)[0].cpu().numpy()
+            best = int(np.argmax(probs))
+            label = classes[best]
+            return RouteResult(
+                profile=None if label == "other" else label,
+                confidence=float(probs[best]),
+                method="model",
+                probabilities={c: float(p) for c, p in zip(classes, probs)},
+                reason="Scan type predicted by the router model.",
+            )
+        return self._heuristic_route(scan)
+
+    def _heuristic_route(self, scan: Scan) -> RouteResult:
+        meta = {k: v.upper() for k, v in scan.metadata.items()}
+        modality, body = meta.get("Modality", ""), meta.get("BodyPartExamined", "")
+        if modality == "MR" or {"flair", "t1ce", "t2"} & set(scan.channels):
+            return RouteResult("brain_mri", 0.9, "metadata", reason="MRI sequences / DICOM modality MR.")
+        if modality == "CT" or "CHEST" in body or "LUNG" in body:
+            return RouteResult("lung_ct", 0.85, "metadata", reason="DICOM modality CT / chest.")
+        if modality == "US" or "BREAST" in body:
+            return RouteResult("breast_us", 0.85, "metadata", reason="DICOM modality ultrasound / breast.")
+        if scan.source_format == "nifti":
+            return RouteResult("brain_mri", 0.6, "heuristic", reason="NIfTI volumes are most often brain MRI.")
+
+        # Plain image: look at the shape of the imaged body part.
+        vol = normalize(scan.primary())
+        sl = vol[vol.shape[0] // 2]
+        fg = foreground_mask(sl)
+        if fg.sum() < 0.05 * fg.size:
+            return RouteResult("breast_us", 0.4, "heuristic", reason="Small field of view, guessed ultrasound.")
+        inner = ndimage.binary_erosion(fg, iterations=5)
+        mean = ndimage.uniform_filter(sl, 5)
+        std = np.sqrt(np.clip(ndimage.uniform_filter(sl**2, 5) - mean**2, 0, None))
+        speckle = float(np.median(std[inner] / (mean[inner] + 0.05))) if inner.any() else 0.0
+        if speckle > 0.08:
+            return RouteResult("breast_us", 0.55, "heuristic", reason="Grainy speckle texture typical of ultrasound.")
+        dark_inside = float(((sl < 0.25) & ndimage.binary_erosion(fg, iterations=5)).sum() / max(fg.sum(), 1))
+        hull_fill = fg.sum() / max(ndimage.binary_fill_holes(ndimage.binary_closing(fg, iterations=15)).sum(), 1)
+        if dark_inside > 0.2:
+            return RouteResult("lung_ct", 0.55, "heuristic", reason="Large dark regions inside the body (lung fields).")
+        if hull_fill > 0.9:
+            return RouteResult("brain_mri", 0.55, "heuristic", reason="Compact, rounded body outline (head).")
+        return RouteResult("breast_us", 0.45, "heuristic", reason="Irregular field of view, guessed ultrasound.")
+
+    # ------------------------------------------------------------------ segmentation
+    def segment(self, scan: Scan, profile: CancerProfile) -> Segmentation:
+        if profile.key not in self.segmenters:
+            labels, uncertainty, saliency = heuristic.segment(
+                scan.primary(profile.classifier_channel_preference), profile, flair=scan.channels.get("flair")
+            )
+            return Segmentation("heuristic", labels, uncertainty, saliency)
+
+        model, meta = self.segmenters[profile.key]
+        channels = tuple(meta.get("channels", profile.seg_channels))
+        size = meta.get("image_size", profile.seg_size)
+        x = channel_stack(scan, channels)  # (C, Z, H, W)
+        _, z, h, w = x.shape
+        labels = np.zeros((z, h, w), dtype=np.uint8)
+        uncertainty = np.zeros((z, h, w), dtype=np.float32)
+        active = [i for i in range(z) if x[:, i].max() > 0.05]
+
+        def run(indices: list[int], samples: int):
+            batch = np.stack([resize2d(x[:, i], (size, size)) for i in indices])
+            t = torch.from_numpy(batch).float().to(self.device)
+            with torch.no_grad():
+                if samples == 1:
+                    model.eval()
+                    probs = torch.softmax(model(t), dim=1)[None]
+                else:
+                    enable_mc_dropout(model)
+                    probs = torch.stack([torch.softmax(model(t), dim=1) for _ in range(samples)])
+                    model.eval()
+                probs = F.interpolate(probs.flatten(0, 1), size=(h, w), mode="bilinear", align_corners=False)
+            return probs.view(samples, len(indices), -1, h, w).mean(0).cpu().numpy()
+
+        # Fast deterministic pass everywhere, then MC dropout where tumor was found.
+        for start in range(0, len(active), BATCH):
+            idx = active[start : start + BATCH]
+            labels[idx] = run(idx, 1).argmax(1)
+        tumor_slices = sorted({j for i in np.where(labels.any(axis=(1, 2)))[0] for j in (i - 1, i, i + 1) if 0 <= j < z})
+        for start in range(0, len(tumor_slices), BATCH):
+            idx = tumor_slices[start : start + BATCH]
+            probs = run(idx, self.mc_samples)
+            labels[idx] = probs.argmax(1)
+            uncertainty[idx] = _entropy(probs, axis=1)
+        return Segmentation("model", labels, uncertainty)
+
+    # ------------------------------------------------------------------ classification
+    def key_slices(self, scan: Scan, seg: Segmentation, limit: int = 5) -> list[int]:
+        areas = (seg.labels > 0).sum(axis=(1, 2))
+        if areas.max() > 0:
+            best = int(np.argmax(areas))
+            half = limit // 2
+            return [i for i in range(best - half, best + half + 1) if 0 <= i < len(areas) and areas[i] > 0]
+        vol = normalize(scan.primary())
+        fg = [i for i, s in enumerate(vol) if s.mean() > 0.02]
+        if not fg:
+            return [len(vol) // 2]
+        return sorted({fg[int(round(j))] for j in np.linspace(0, len(fg) - 1, num=min(16, len(fg)))})
+
+    def classify(self, scan: Scan, profile: CancerProfile, seg: Segmentation) -> tuple[Classification, np.ndarray]:
+        """Classify the scan and return ``(classification, heatmap volume)``."""
+        if profile.key not in self.classifiers:
+            return self._heuristic_classify(scan, profile, seg)
+
+        model, meta = self.classifiers[profile.key]
+        classes = list(meta.get("classes", profile.classes))
+        size = meta.get("image_size", profile.image_size)
+        vol = normalize(scan.primary(profile.classifier_channel_preference))
+        slices = self.key_slices(scan, seg)
+        batch = torch.from_numpy(np.stack([resize2d(vol[i], (size, size)) for i in slices])[:, None].copy()).float()
+        batch = batch.to(self.device)
+        with torch.no_grad():
+            enable_mc_dropout(model)
+            samples = torch.stack([torch.softmax(model(batch), dim=1) for _ in range(self.mc_samples)])
+            model.eval()
+        per_sample = samples.mean(dim=1).cpu().numpy()  # (T, K) averaged over slices
+        probs = per_sample.mean(axis=0)
+        best = int(np.argmax(probs))
+        label = classes[best]
+        cls = Classification(
+            method="model",
+            label=label,
+            display=profile.class_descriptions.get(label, label),
+            probabilities={c: float(p) for c, p in zip(classes, probs)},
+            confidence=float(probs[best]),
+            uncertainty=float(_entropy(probs[None], axis=1)[0]),
+            mc_std=float(per_sample[:, best].std()),
+            slices_used=slices,
+        )
+        return cls, self._grad_cam_volume(model, vol, seg, slices, best, size)
+
+    def _grad_cam_volume(self, model, vol, seg, key_slices, target, size) -> np.ndarray:
+        z, h, w = vol.shape
+        heat = np.zeros((z, h, w), dtype=np.float32)
+        tumor = list(np.where(seg.labels.any(axis=(1, 2)))[0])
+        chosen = sorted(set(tumor[:: max(1, math.ceil(len(tumor) / MAX_CAM_SLICES))]) | set(key_slices))
+        for i in chosen:
+            x = torch.from_numpy(resize2d(vol[i], (size, size))[None, None].copy()).float().to(self.device)
+            cam = grad_cam(model, x, target).cpu().numpy()
+            heat[i] = resize2d(cam, (h, w))
+        return np.clip(heat, 0, 1)
+
+    def _heuristic_classify(self, scan, profile, seg) -> tuple[Classification, np.ndarray]:
+        saliency = seg.saliency
+        if saliency is None:
+            saliency = heuristic.segment(scan.primary(profile.classifier_channel_preference), profile)[2]
+        score = heuristic.abnormality_score(seg.labels, saliency)
+        abnormal = bool((seg.labels > 0).any())
+        probs = {"abnormal": score, profile.normal_class: 1 - score}
+        p = np.array([score, 1 - score])
+        label = "abnormal" if abnormal else profile.normal_class
+        display = (
+            "Abnormal region detected (tumor type needs a trained classifier)"
+            if abnormal
+            else profile.class_descriptions[profile.normal_class]
+        )
+        cls = Classification(
+            method="heuristic",
+            label=label,
+            display=display,
+            probabilities=probs,
+            confidence=float(max(score, 1 - score)),
+            uncertainty=float(_entropy(p[None], axis=1)[0]),
+            slices_used=self.key_slices(scan, seg),
+        )
+        return cls, saliency

@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OncoVision</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 32 32%22%3E%3Ccircle cx=%2216%22 cy=%2216%22 r=%2213%22 fill=%22none%22 stroke=%22%2338bdf8%22 stroke-width=%223%22/%3E%3Ccircle cx=%2219%22 cy=%2213%22 r=%225%22 fill=%22%2338bdf8%22/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <script type="importmap">
+    { "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+    } }
+  </script>
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 32 32" width="28" height="28" aria-hidden="true"><circle cx="16" cy="16" r="13" fill="none" stroke="currentColor" stroke-width="2.5"/><circle cx="19" cy="13" r="4.5" fill="currentColor" opacity=".85"/><path d="M6 22c4-3 8-3 12 0s7 2 9-1" fill="none" stroke="currentColor" stroke-width="2"/></svg>
+      <span>OncoVision</span>
+    </div>
+    <div class="status" id="status"></div>
+  </header>
+
+  <div class="layout">
+    <!-- Sidebar: upload + patients -->
+    <aside class="sidebar">
+      <section class="card">
+        <h2>New analysis</h2>
+        <form id="upload-form">
+          <label class="drop" id="drop">
+            <input type="file" id="file-input" multiple hidden>
+            <strong>Drop scan files here</strong>
+            <span>PNG / JPG, DICOM (.dcm or .zip series), NIfTI (.nii / .nii.gz). For brain MRI you can add FLAIR, T1, T1ce and T2 together.</span>
+          </label>
+          <ul class="file-list" id="file-list"></ul>
+          <div class="grid2">
+            <label>Scan type
+              <select id="scan-type">
+                <option value="auto">Auto-detect</option>
+              </select>
+            </label>
+            <label>Scan date
+              <input type="date" id="scan-date">
+            </label>
+          </div>
+          <label>Patient label <small>(no real names)</small>
+            <input type="text" id="patient-label" placeholder="e.g. Case-001" list="patient-options">
+            <datalist id="patient-options"></datalist>
+          </label>
+          <details>
+            <summary>Advanced</summary>
+            <label>Pixel spacing (mm) <small>if known, for plain images</small>
+              <input type="number" id="pixel-spacing" step="0.01" min="0.01" placeholder="auto">
+            </label>
+          </details>
+          <button type="submit" class="primary" id="analyze-btn" disabled>Analyze scan</button>
+          <p class="hint" id="upload-msg"></p>
+        </form>
+      </section>
+
+      <section class="card">
+        <h2>Patients</h2>
+        <div id="patients" class="patients"><p class="muted">No studies yet.</p></div>
+      </section>
+    </aside>
+
+    <!-- Main study view -->
+    <main class="main" id="main">
+      <div class="empty" id="empty">
+        <h1>Tumor detection, segmentation and explanation</h1>
+        <p>Upload a brain MRI, breast ultrasound or lung CT to get started. OncoVision outlines the tumor and its sub-regions, measures it, shows what the AI focused on and how sure it is, tracks change over time, and lets you ask questions about the result.</p>
+        <p class="muted">No scans? Run <code>python scripts/make_demo_data.py</code> and upload the files from <code>demo_data/</code>.</p>
+      </div>
+
+      <div id="study" hidden>
+        <div class="study-head">
+          <div>
+            <h1 id="study-title"></h1>
+            <p class="muted" id="study-sub"></p>
+          </div>
+          <div class="actions">
+            <a class="btn" id="report-doctor" target="_blank">Doctor report (PDF)</a>
+            <a class="btn" id="report-patient" target="_blank">Patient summary (PDF)</a>
+            <button class="btn ghost" id="delete-study" title="Delete this study">Delete</button>
+          </div>
+        </div>
+        <div id="banners"></div>
+
+        <nav class="tabs" role="tablist">
+          <button class="tab active" data-tab="viewer">Viewer</button>
+          <button class="tab" data-tab="three">3D</button>
+          <button class="tab" data-tab="timeline">Timeline</button>
+        </nav>
+
+        <section class="tabpane" id="tab-viewer">
+          <div class="viewer-grid">
+            <div class="viewer card">
+              <div class="toolbar">
+                <div class="seg" id="layer-buttons">
+                  <button data-layer="original">Original</button>
+                  <button data-layer="overlay" class="active">Tumor overlay</button>
+                  <button data-layer="heatmap">AI heatmap</button>
+                  <button data-layer="uncertainty">Uncertainty</button>
+                </div>
+                <select id="sequence-select" title="MRI sequence"></select>
+              </div>
+              <div class="image-wrap"><img id="slice-img" alt="Scan slice"></div>
+              <div class="slider-row" id="slider-row">
+                <span>Slice</span>
+                <input type="range" id="slice-slider" min="0" max="0" value="0">
+                <span id="slice-label">0</span>
+                <button class="btn small" id="jump-key">Largest tumor slice</button>
+              </div>
+              <div class="legend" id="legend"></div>
+              <p class="hint" id="layer-help"></p>
+            </div>
+            <div class="findings">
+              <div class="card" id="classification-card"></div>
+              <div class="card" id="measurements-card"></div>
+              <div class="card" id="scan-card"></div>
+            </div>
+          </div>
+        </section>
+
+        <section class="tabpane" id="tab-three" hidden>
+          <div class="card three-card">
+            <div class="toolbar"><div id="mesh-toggles" class="toggles"></div><span class="hint">Drag to rotate, scroll to zoom</span></div>
+            <div id="three-container"></div>
+            <p class="hint" id="three-msg"></p>
+          </div>
+        </section>
+
+        <section class="tabpane" id="tab-timeline" hidden>
+          <div class="card">
+            <h3>Tumor size over time</h3>
+            <div id="timeline-chart"></div>
+          </div>
+          <div class="card" id="comparison-card"></div>
+        </section>
+      </div>
+    </main>
+
+    <!-- Chat -->
+    <aside class="chat" id="chat">
+      <div class="chat-head">
+        <h2>Ask about this scan</h2>
+        <div class="grid2">
+          <div class="seg small" id="audience">
+            <button data-audience="patient" class="active">Patient</button>
+            <button data-audience="doctor">Doctor</button>
+          </div>
+          <select id="language"></select>
+        </div>
+      </div>
+      <div class="messages" id="messages">
+        <p class="muted">Analyze or open a study to start chatting.</p>
+      </div>
+      <div class="suggestions" id="suggestions"></div>
+      <form class="chat-input" id="chat-form">
+        <textarea id="chat-text" rows="2" placeholder="e.g. What does this result mean?" disabled></textarea>
+        <button type="submit" class="primary" id="chat-send" disabled>Send</button>
+      </form>
+    </aside>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>
