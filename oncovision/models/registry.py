@@ -29,6 +29,9 @@ class CancerProfile:
     class_descriptions: dict[str, str]
     normal_class: str
     seg_labels: tuple[SegLabel, ...]
+    # Labels produced only by some models, e.g. a whole-tumor label from
+    # segmenters trained on binary masks (Figshare) instead of BraTS sub-regions.
+    extra_labels: tuple[SegLabel, ...] = ()
     # MRI sequences the segmenter expects, in channel order. Missing sequences
     # are filled with an available one (models are trained with sequence dropout).
     seg_channels: tuple[str, ...] = ("image",)
@@ -38,6 +41,8 @@ class CancerProfile:
     # Whether lesions are usually brighter ("bright") or darker ("dark") than
     # surrounding tissue; used by the heuristic demo segmenter.
     lesion_polarity: str = "bright"
+    # CT display window in Hounsfield units, applied to DICOM/NIfTI CT before normalization.
+    intensity_window: tuple[float, float] | None = None
     reporting_system: str = ""
     datasets: tuple[str, ...] = field(default_factory=tuple)
 
@@ -45,8 +50,17 @@ class CancerProfile:
     def num_seg_classes(self) -> int:
         return len(self.seg_labels) + 1  # + background
 
+    @property
+    def display_labels(self) -> tuple[SegLabel, ...]:
+        return self.seg_labels + self.extra_labels
+
+    @property
+    def whole_tumor_label(self) -> int:
+        """Label value used when a model only predicts tumor vs background."""
+        return self.extra_labels[0].index if self.extra_labels else self.seg_labels[0].index
+
     def label(self, index: int) -> SegLabel:
-        return next(lbl for lbl in self.seg_labels if lbl.index == index)
+        return next(lbl for lbl in self.display_labels if lbl.index == index)
 
 
 PROFILES: dict[str, CancerProfile] = {
@@ -68,11 +82,16 @@ PROFILES: dict[str, CancerProfile] = {
             SegLabel(2, "edema", (250, 204, 21), "Peritumoral edema (swelling)"),
             SegLabel(3, "enhancing_tumor", (59, 130, 246), "Enhancing (active) tumor"),
         ),
+        extra_labels=(SegLabel(4, "tumor", (244, 63, 94), "Tumor (sub-regions not separated)"),),
         seg_channels=("flair", "t1", "t1ce", "t2"),
         classifier_channel_preference=("t1ce", "t1", "flair", "t2", "image"),
         lesion_polarity="bright",
         reporting_system="RANO (Response Assessment in Neuro-Oncology)",
-        datasets=("Kaggle Brain Tumor MRI (classification)", "BraTS 2021 (segmentation)"),
+        datasets=(
+            "Kaggle Brain Tumor MRI (classification)",
+            "Figshare brain tumor dataset (whole-tumor segmentation)",
+            "BraTS 2021 (sub-region segmentation)",
+        ),
     ),
     "breast_us": CancerProfile(
         key="breast_us",
@@ -104,9 +123,11 @@ PROFILES: dict[str, CancerProfile] = {
         },
         normal_class="normal",
         seg_labels=(SegLabel(1, "nodule", (16, 185, 129), "Lung nodule"),),
+        seg_size=256,  # nodules are small, so segment at a higher resolution
         lesion_polarity="bright",
+        intensity_window=(-1000.0, 400.0),  # lung window
         reporting_system="Lung-RADS",
-        datasets=("IQ-OTH/NCCD lung cancer CT (classification)", "LIDC-IDRI (nodule masks)"),
+        datasets=("LIDC-IDRI (nodule masks, slice classification)", "IQ-OTH/NCCD lung cancer CT (classification)"),
     ),
 }
 

@@ -39,36 +39,37 @@ from .datasets import (
     find_mask_folder_pairs,
     prepare_brats,
     split_by_case,
-    split_items,
+    split_by_key,
 )
 
 
-def evaluate(model, loader, device, profile) -> dict:
-    """Mean per-image Dice for each label and, for brain, the standard BraTS regions."""
+def evaluate(model, loader, device, profile, label_indices: list[int]) -> dict:
+    """Mean per-image Dice: whole tumor / lesion, each label, and for BraTS models the standard regions."""
     model.eval()
+    to_label = np.asarray(label_indices)
+    multi = len(label_indices) > 2
+    whole = "whole_tumor" if profile.organ == "brain" else "lesion"
     scores: dict[str, list[float]] = {}
 
     def add(name, pred, target):
-        scores.setdefault(name, []).append(dice_score(pred, target))
+        if pred.any() or target.any():  # empty-vs-empty would inflate Dice
+            scores.setdefault(name, []).append(dice_score(pred, target))
 
     with torch.no_grad():
         for x, y in loader:
-            pred = model(x.to(device)).argmax(1).cpu().numpy()
-            y = y.numpy()
-            for p, t in zip(pred, y):
-                if not t.any() and not p.any():
-                    continue  # empty slices would inflate Dice
-                for lbl in profile.seg_labels:
-                    add(lbl.name, p == lbl.index, t == lbl.index)
-                if profile.organ == "brain":
-                    add("whole_tumor", p > 0, t > 0)
-                    add("tumor_core", np.isin(p, (1, 3)), np.isin(t, (1, 3)))
-                    add("enhancing_tumor_region", p == 3, t == 3)
-                else:
-                    add("lesion", p > 0, t > 0)
+            pred = to_label[model(x.to(device)).argmax(1).cpu().numpy()]
+            target = to_label[y.numpy()]
+            for p, t in zip(pred, target):
+                add(whole, p > 0, t > 0)
+                if multi:
+                    for lbl in profile.seg_labels:
+                        add(lbl.name, p == lbl.index, t == lbl.index)
+                    if profile.organ == "brain":
+                        add("tumor_core", np.isin(p, (1, 3)), np.isin(t, (1, 3)))
+                        add("enhancing_tumor_region", p == 3, t == 3)
     out = {k: round(float(np.mean(v)), 4) for k, v in scores.items()}
-    key = "whole_tumor" if profile.organ == "brain" else "lesion"
-    out["mean_dice"] = round(float(np.mean([out[k] for k in out if k in (key, "tumor_core", "enhancing_tumor_region")])), 4) if out else 0.0
+    main_keys = [k for k in (whole, "tumor_core", "enhancing_tumor_region") if k in out]
+    out["mean_dice"] = round(float(np.mean([out[k] for k in main_keys])), 4) if main_keys else 0.0
     return out
 
 
@@ -106,28 +107,32 @@ def main() -> None:
         train_files, val_files = split_by_case(files, args.val_fraction)
         train_ds, val_ds = SliceFileDataset(train_files), SliceFileDataset(val_files)
         channels = list(profile.seg_channels)
+        label_indices = list(range(profile.num_seg_classes))
     else:
+        # Binary masks: tumor vs background. For brain this is the whole-tumor label.
         pairs = find_busi_pairs(args.data) if args.format == "busi" else find_mask_folder_pairs(args.data, args.masks)
         if args.max_items:
             pairs = pairs[: args.max_items]
-        train_pairs, val_pairs = split_items(pairs, args.val_fraction)
-        binary = profile.num_seg_classes == 2
-        train_ds, val_ds = MaskSegmentationDataset(train_pairs, size, binary), MaskSegmentationDataset(val_pairs, size, binary)
+        # Files named "<patient>__<slice>.png" are split by patient.
+        train_pairs, val_pairs = split_by_key(pairs, lambda pair: pair[0].stem.split("__")[0], args.val_fraction)
+        train_ds, val_ds = MaskSegmentationDataset(train_pairs, size), MaskSegmentationDataset(val_pairs, size)
         channels = ["image"]
+        label_indices = [0, profile.whole_tumor_label]
     if not len(train_ds):
         raise SystemExit("No training samples found. Check --data and --format (see docs/DATASETS.md).")
     print(f"device={device}  train={len(train_ds)}  val={len(val_ds)}  channels={channels}")
 
     train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True, num_workers=args.workers, drop_last=len(train_ds) > args.batch_size)
     val_loader = DataLoader(val_ds, batch_size=args.batch_size, num_workers=args.workers)
-    model = UNet(in_channels=len(channels), num_classes=profile.num_seg_classes, base=args.base).to(device)
+    model = UNet(in_channels=len(channels), num_classes=len(label_indices), base=args.base).to(device)
     optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=1e-4)
     ce = nn.CrossEntropyLoss()
     scaler = torch.amp.GradScaler("cuda", enabled=device.type == "cuda")
     meta = {
         "profile": profile.key,
         "channels": channels,
-        "num_classes": profile.num_seg_classes,
+        "num_classes": len(label_indices),
+        "label_indices": label_indices,
         "image_size": size,
         "base": args.base,
         "architecture": "unet2d",
@@ -151,7 +156,7 @@ def main() -> None:
             scaler.update()
             total += loss.item() * len(y)
             seen += len(y)
-        metrics = evaluate(model, val_loader, device, profile) if len(val_ds) else {"mean_dice": 0.0}
+        metrics = evaluate(model, val_loader, device, profile, label_indices) if len(val_ds) else {"mean_dice": 0.0}
         print(f"epoch {epoch + 1}/{args.epochs}  lr={lr:.2e}  loss={total / max(seen, 1):.4f}  val={json.dumps(metrics)}")
         if metrics["mean_dice"] >= best:
             best = metrics["mean_dice"]

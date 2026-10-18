@@ -46,6 +46,16 @@ class UnsupportedScanError(ValueError):
     pass
 
 
+def apply_window(scan: Scan, profile) -> None:
+    """Clip CT values in Hounsfield units to the profile's window (e.g. lung window)."""
+    if not profile.intensity_window or scan.source_format not in ("dicom", "nifti"):
+        return
+    lo, hi = profile.intensity_window
+    for name, arr in scan.channels.items():
+        if arr.min() < -500:  # looks like HU; plain-intensity data is left alone
+            scan.channels[name] = np.clip(arr, lo, hi)
+
+
 def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_uncertainty: float, profile) -> list[str]:
     reasons = []
     if route.method != "user" and route.confidence < 0.6:
@@ -90,6 +100,7 @@ def analyze(
             f"({', '.join(p.display_name for p in PROFILES.values())}). Pick the scan type manually to analyze anyway."
         )
     profile = get_profile(route.profile)
+    apply_window(scan, profile)
 
     if scan.spacing is None and profile.organ == "brain":
         est = estimate_brain_spacing(scan.primary())
@@ -122,7 +133,7 @@ def analyze(
             "modality": profile.modality,
             "reporting_system": profile.reporting_system,
             "seg_labels": [
-                {"index": l.index, "name": l.name, "description": l.description, "color": l.color} for l in profile.seg_labels
+                {"index": l.index, "name": l.name, "description": l.description, "color": l.color} for l in profile.display_labels
             ],
         },
         "route": {"method": route.method, "confidence": route.confidence, "reason": route.reason, "probabilities": route.probabilities},

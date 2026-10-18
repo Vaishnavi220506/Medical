@@ -34,7 +34,7 @@ def gray_rgb(base: np.ndarray) -> np.ndarray:
 
 def overlay(base: np.ndarray, labels: np.ndarray, profile: CancerProfile, alpha: float = 0.45) -> np.ndarray:
     rgb = gray_rgb(base)
-    for lbl in profile.seg_labels:
+    for lbl in profile.display_labels:
         mask = labels == lbl.index
         if not mask.any():
             continue

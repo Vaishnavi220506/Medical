@@ -70,3 +70,53 @@ def test_brats_segmenter_training(isolated, demo, tmp_path, monkeypatch):
     files = [(f"x_{s}.nii.gz", nib.Nifti1Image(v, np.eye(4)).to_bytes(), s) for s, v in demo.phantom(10.0, rng).items()]
     study = analyze(files, "brain_mri", "Case-B")
     assert study["segmentation"]["method"] == "model"
+
+
+def test_binary_brain_segmenter_and_evaluate(isolated, demo_dir, tmp_path, monkeypatch):
+    """Figshare-style binary masks map to the whole-tumor label, and evaluate.py writes report files."""
+    from oncovision.training import evaluate
+
+    img = np.asarray(Image.open(demo_dir / "brain_slice.png"))
+    mask = (img > 200).astype(np.uint8) * 255
+    for d in ("images", "masks"):
+        (tmp_path / "fig" / d).mkdir(parents=True)
+    for pid in range(3):
+        Image.fromarray(img).save(tmp_path / "fig" / "images" / f"{pid}__1.png")
+        Image.fromarray(mask).save(tmp_path / "fig" / "masks" / f"{pid}__1.png")
+    out = isolated.weights_dir / "brain_mri" / "segmenter.pt"
+    _run(train_segmenter, ["--profile", "brain_mri", "--format", "maskfolder", "--data", str(tmp_path / "fig" / "images"), "--masks", str(tmp_path / "fig" / "masks"), "--epochs", "1", "--batch-size", "2", "--base", "8", "--workers", "0", "--val-fraction", "0.34", "--out", str(out)], monkeypatch)
+    import torch
+
+    meta = torch.load(out, weights_only=True)["meta"]
+    assert meta["label_indices"] == [0, 4] and meta["channels"] == ["image"]
+
+    study = analyze([("s.png", (demo_dir / "brain_slice.png").read_bytes(), None)], "brain_mri", "Case-F")
+    assert study["segmentation"]["method"] == "model"
+    assert set(np.unique(get_store_labels(study))) <= {0, 4}
+
+    report_dir = tmp_path / "report"
+    _run(evaluate, ["segmenter", "--profile", "brain_mri", "--format", "maskfolder", "--data", str(tmp_path / "fig" / "images"), "--masks", str(tmp_path / "fig" / "masks"), "--weights", str(out), "--out", str(report_dir), "--workers", "0"], monkeypatch)
+    assert (report_dir / "metrics.json").exists() and (report_dir / "segmentation_examples.png").exists()
+
+
+def test_classifier_evaluate_report(isolated, tmp_path, monkeypatch):
+    from oncovision.training import evaluate
+
+    rng = np.random.default_rng(0)
+    root = tmp_path / "Testing"
+    for folder in ("normal", "benign", "malignant"):
+        (root / folder).mkdir(parents=True)
+        for i in range(3):
+            Image.fromarray(rng.integers(0, 255, (64, 64), dtype=np.uint8)).save(root / folder / f"{i}.png")
+    out = tmp_path / "clf.pt"
+    _run(train_classifier, ["--profile", "breast_us", "--train-dir", str(root), "--epochs", "1", "--batch-size", "4", "--workers", "0", "--out", str(out)], monkeypatch)
+    report_dir = tmp_path / "report"
+    _run(evaluate, ["classifier", "--profile", "breast_us", "--data", str(root), "--weights", str(out), "--out", str(report_dir), "--workers", "0"], monkeypatch)
+    for name in ("metrics.json", "confusion_matrix.png", "gradcam_examples.png"):
+        assert (report_dir / name).exists()
+
+
+def get_store_labels(study):
+    from oncovision.analysis.pipeline import get_store
+
+    return get_store().arrays(study["id"])["labels"]

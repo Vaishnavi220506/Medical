@@ -62,7 +62,7 @@ def profiles():
             "modality": p.modality,
             "classes": p.classes,
             "sequences": p.seg_channels,
-            "seg_labels": [{"index": l.index, "name": l.name, "description": l.description, "color": l.color} for l in p.seg_labels],
+            "seg_labels": [{"index": l.index, "name": l.name, "description": l.description, "color": l.color} for l in p.display_labels],
             "datasets": p.datasets,
         }
         for p in PROFILES.values()

@@ -3,7 +3,11 @@ import { renderMeshes, disposeViewer } from "./viewer3d.js";
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 const pct = (v) => `${Math.round((v ?? 0) * 100)}%`;
-const md = (text) => DOMPurify.sanitize(marked.parse(text || ""), { ADD_ATTR: ["target"] });
+// Markdown via CDN libraries; plain escaped text if they failed to load (offline).
+const md = (text) =>
+  window.marked && window.DOMPurify
+    ? DOMPurify.sanitize(marked.parse(text || ""), { ADD_ATTR: ["target"] })
+    : `<p>${esc(text).replace(/\n/g, "<br>")}</p>`;
 
 const SEQUENCES = ["", "flair", "t1", "t1ce", "t2"];
 const LAYER_HELP = {
@@ -243,7 +247,10 @@ function renderScanInfo(s) {
 }
 
 function renderLegend(s) {
-  $("#legend").innerHTML = s.profile.seg_labels.map((l) => `<span><i style="background:rgb(${l.color.join(",")})"></i>${esc(l.description)}</span>`).join("");
+  // Only list the labels this study actually contains (falls back to all of them).
+  const present = new Set((s.measurements.regions || []).map((r) => r.name));
+  const labels = s.profile.seg_labels.filter((l) => present.has(l.name));
+  $("#legend").innerHTML = (labels.length ? labels : s.profile.seg_labels).map((l) => `<span><i style="background:rgb(${l.color.join(",")})"></i>${esc(l.description)}</span>`).join("");
 }
 
 function updateSlice() {
@@ -314,7 +321,10 @@ async function load3D() {
       <label><input type="checkbox" data-mesh="${i}" checked><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(${m.color.join(",")})"></i>${esc(m.description || m.name)}</label>`).join("");
     $("#mesh-toggles").onchange = (e) => { if (e.target.dataset.mesh) handles[+e.target.dataset.mesh].visible = e.target.checked; };
   } catch (err) {
-    $("#three-msg").textContent = `Could not load 3D view: ${err.message}`;
+    const offline = /import|module|fetch/i.test(err.message);
+    $("#three-msg").textContent = offline
+      ? "Could not load the 3D library (needs an internet connection the first time)."
+      : `Could not load 3D view: ${err.message}`;
   }
 }
 

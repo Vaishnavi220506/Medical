@@ -31,7 +31,7 @@ from ..config import settings
 from ..models.networks import Classifier
 from ..models.registry import ROUTER_CLASSES, get_profile
 from .common import classification_metrics, cosine_lr, intensity_jitter, pick_device, random_affine, save_checkpoint, seed_everything
-from .datasets import ClassificationDataset, find_class_images, split_items
+from .datasets import ClassificationDataset, find_class_images, split_by_key
 
 
 def evaluate(model, loader, device) -> tuple[list[int], list[int]]:
@@ -67,7 +67,9 @@ def train(
         raise SystemExit(f"No images found in {train_dir} for classes {classes}. Check the folder names (see docs/DATASETS.md).")
     if max_items:
         items = items[:max_items]
-    train_items, val_items = split_items(items, val_fraction)
+    # Files named "<patient>__<slice>.png" are split by patient so near-identical
+    # neighbouring slices never end up on both sides.
+    train_items, val_items = split_by_key(items, lambda it: it[0].stem.split("__")[0], val_fraction)
     counts = Counter(label for _, label in train_items)
     print(f"device={device}  train={len(train_items)}  val={len(val_items)}  per class={ {classes[k]: v for k, v in sorted(counts.items())} }")
 

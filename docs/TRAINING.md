@@ -1,90 +1,81 @@
 # Training guide
 
-You don't need a GPU on your laptop. The usual workflow is: **train on a free cloud GPU, then download the checkpoints into `weights/` on your laptop.**
+This guide trains the models that go in `weights/`. You don't need a GPU on your laptop: the easiest route is the notebook below on a free cloud GPU. Everything also runs on a CPU, just slower (a few hours on a 4-core CPU).
 
-Free options:
-- **Kaggle Notebooks**: about 30 GPU hours per week, and the datasets are one click away (*Add Input*). Recommended.
-- **Google Colab**: free T4 GPU, but sessions disconnect after a few hours, so save checkpoints to Google Drive.
+## Option A: one-click notebook (recommended)
 
-The times below are rough estimates for a T4 GPU.
+1. Open [`notebooks/train_oncovision.ipynb`](../notebooks/train_oncovision.ipynb) on **Kaggle** (*New Notebook → File → Import Notebook*, then *Settings → Accelerator → GPU T4* and *Internet → On*) or **Google Colab** (*Runtime → Change runtime type → GPU*).
+2. *Run all.* It clones this repo, downloads the datasets from public Hugging Face mirrors (no Kaggle API key needed), trains the brain and breast models, and writes evaluation reports.
+3. Download `oncovision_weights.zip`, unzip it in your OncoVision folder, and restart the app.
 
-## 1. Set up the notebook
+With a T4 GPU and the notebook's default epochs this takes well under an hour in total.
 
-In a Kaggle or Colab notebook with a GPU enabled:
+## Option B: command line
 
-```bash
-!git clone https://github.com/Vaishnavi220506/Medical.git oncovision
-%cd oncovision
-!pip install -q -r requirements.txt     # torch is already installed on Kaggle/Colab
-```
-
-On Kaggle, add the datasets with **Add Input** (they appear under `/kaggle/input/...`). On Colab, upload your `kaggle.json` API token and download them:
+### Get the data
 
 ```bash
-!mkdir -p ~/.kaggle && cp kaggle.json ~/.kaggle/ && chmod 600 ~/.kaggle/kaggle.json
-!kaggle datasets download -d masoudnickparvar/brain-tumor-mri-dataset -p data --unzip
-!kaggle datasets download -d aryashah2k/breast-ultrasound-images-dataset -p data --unzip
-!kaggle datasets download -d dschettler8845/brats-2021-task1 -p data --unzip
+pip install huggingface_hub pyarrow
+python - <<'EOF'
+from huggingface_hub import snapshot_download
+snapshot_download("BJyotibrat/Masoud-Nickparvar-Brain-Tumor-MRI-Dataset", repo_type="dataset", local_dir="data/brain")
+snapshot_download("theshoaibme/panorgan-busi-breast-ultrasound", repo_type="dataset", local_dir="data/busi")
+EOF
+python scripts/prepare_figshare.py --download --raw data/figshare_raw --out data/figshare
 ```
 
-Check the folder names with `!ls data` and adjust the paths below.
-
-## 2. Brain tumor classifier (about 15-25 minutes)
+For lung CT, download LIDC-IDRI volumes with nodule masks (see [DATASETS.md](DATASETS.md)) and convert them:
 
 ```bash
-!python -m oncovision.training.train_classifier --profile brain_mri \
-    --train-dir data/Training --test-dir data/Testing \
-    --pretrained --epochs 20 --batch-size 64
+python scripts/prepare_lidc.py --raw data/lidc --out data/lidc_2d
 ```
 
-`--pretrained` starts from ImageNet weights, which trains faster and generalizes better. Test accuracy above 95% is typical on this dataset. Note that this dataset is "easy", so real-world accuracy will be lower.
-
-## 3. Brain tumor segmenter on BraTS (prep about 30-45 min, training several hours)
+### Train
 
 ```bash
-!python -m oncovision.training.train_segmenter --profile brain_mri --format brats \
-    --data data/BraTS2021_Training_Data --prepared-dir data/brats_slices \
-    --epochs 30 --batch-size 32
+# Brain: tumor type (4 classes) and tumor outline
+python -m oncovision.training.train_classifier --profile brain_mri --train-dir data/brain/Training --test-dir data/brain/Testing --pretrained --epochs 15
+python -m oncovision.training.train_segmenter  --profile brain_mri --format maskfolder --data data/figshare/train/images --masks data/figshare/train/masks --epochs 40
+
+# Breast ultrasound
+python -m oncovision.training.train_classifier --profile breast_us --train-dir data/busi --pretrained --epochs 30
+python -m oncovision.training.train_segmenter  --profile breast_us --format busi --data data/busi --epochs 60
+
+# Lung CT
+python -m oncovision.training.train_classifier --profile lung_ct --train-dir data/lidc_2d/cls --pretrained --epochs 15
+python -m oncovision.training.train_segmenter  --profile lung_ct --format maskfolder --data data/lidc_2d/seg/images --masks data/lidc_2d/seg/masks --epochs 40
+
+# Scan-type router: one folder per type (brain_mri, breast_us, lung_ct, other), see DATASETS.md
+python -m oncovision.training.train_classifier --router --train-dir data/router --pretrained --epochs 10
 ```
 
-The first run converts the 3D volumes into 2D slices (`--prepared-dir`) once. Later runs reuse them. If your session time is limited:
-- train on a subset first: `--max-items 20000`
-- use fewer epochs (`--epochs 10` already gives usable results)
-- use a smaller network on small GPUs: `--base 16 --batch-size 16`
+Useful options: `--batch-size`, `--lr`, `--workers`, `--max-items N` (quick experiments), `--base 16` (smaller U-Net for small GPUs), `--out path.pt`.
 
-Good 2D U-Nets reach a validation whole-tumor Dice of about 0.85-0.90.
+### BraTS sub-region segmenter (optional)
 
-## 4. Breast ultrasound (about 10 minutes each)
+The Figshare segmenter outlines the **whole tumor** on single images (JPG/PNG/DICOM slices). To separate **necrotic core, edema and enhancing tumor** on multi-sequence MRI (FLAIR, T1, T1ce, T2 NIfTI), train on BraTS instead (about 13 GB, see [DATASETS.md](DATASETS.md)):
 
 ```bash
-!python -m oncovision.training.train_classifier --profile breast_us \
-    --train-dir data/Dataset_BUSI_with_GT --pretrained --epochs 30 --batch-size 32
-!python -m oncovision.training.train_segmenter --profile breast_us --format busi \
-    --data data/Dataset_BUSI_with_GT --epochs 60 --batch-size 16
+python -m oncovision.training.train_segmenter --profile brain_mri --format brats --data data/BraTS2021_Training_Data --prepared-dir data/brats_slices --epochs 20
 ```
 
-BUSI is small, so use more epochs. Results vary between runs.
+The first run converts the 3D volumes into 2D slices once. On small GPUs use `--base 16 --batch-size 8`; with limited time use `--max-items 20000`. Good 2D U-Nets reach a whole-tumor Dice of about 0.85-0.90.
 
-## 5. Lung CT and the router
-
-See [DATASETS.md](DATASETS.md) for the folder layouts, then:
+## Evaluate and make report figures
 
 ```bash
-!python -m oncovision.training.train_classifier --profile lung_ct --train-dir "data/The IQ-OTHNCCD lung cancer dataset" --pretrained
-!python -m oncovision.training.train_classifier --router --train-dir data/router --pretrained --epochs 10
+python -m oncovision.training.evaluate classifier --profile brain_mri --data data/brain/Testing
+python -m oncovision.training.evaluate segmenter  --profile brain_mri --format maskfolder --data data/figshare/test/images --masks data/figshare/test/masks
+python -m oncovision.training.evaluate segmenter  --profile breast_us --format busi --data data/busi --validation-only
 ```
 
-## 6. Bring the weights to your laptop
+Each run writes `reports/<profile>_<kind>/` with `metrics.json` plus figures for a project report: a confusion matrix and Grad-CAM examples for classifiers, and image / ground truth / prediction panels for segmenters.
 
-```bash
-!zip -r weights.zip weights
-```
+## How the training is set up
 
-Download `weights.zip`, unzip it into the project folder so you have `weights/brain_mri/classifier.pt` and so on, and restart the app (or call `POST /api/models/reload`). The status bar switches from "Demo mode" to "Trained models loaded", and `GET /api/health` shows each model's metrics.
-
-## Tips
-
-- Every script prints validation metrics each epoch and keeps the **best** checkpoint.
-- Metrics are saved inside the checkpoint (`meta.metrics`) so you can quote them in your project report.
-- Reproducibility: seeds are fixed (`seed_everything(42)`), and splits are deterministic.
-- For a stronger brain segmenter, consider training a 3D model with MONAI or nnU-Net and adapting `Engine.segment`. The 2D approach here is chosen so it trains on free GPUs.
+- **Patient-level splits.** Files named `<patient>__<slice>.png` (Figshare, LIDC, BraTS) are split by patient, so neighbouring slices of one person never end up in both training and validation. Without this, scores look far better than they really are.
+- **The best epoch is kept.** Each script evaluates every epoch and saves the best checkpoint. Its metrics are stored inside the checkpoint and shown by `GET /api/health`.
+- **Same preprocessing as the app.** Training uses the same normalization, orientation and CT windowing (`oncovision.imaging`) as inference.
+- **Augmentation**: random rotation, scaling, flips, gamma, contrast and noise. Multi-sequence BraTS models also get *sequence dropout*, so they still work when only one sequence is uploaded.
+- **Losses**: class-weighted cross-entropy with label smoothing (classifiers), cross-entropy + Dice (segmenters).
+- **Reproducible**: fixed seeds and deterministic splits.

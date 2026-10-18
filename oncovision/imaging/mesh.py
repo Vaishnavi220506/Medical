@@ -38,7 +38,7 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
     surface = _surface(body, sp, step=2)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
-    for lbl in profile.seg_labels:
+    for lbl in profile.display_labels:
         surface = _surface(lab == lbl.index, sp)
         if surface:
             out["meshes"].append({"name": lbl.name, "description": lbl.description, "color": list(lbl.color), "opacity": 0.9, **surface})

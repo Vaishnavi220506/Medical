@@ -3,7 +3,6 @@ import zipfile
 
 import nibabel as nib
 import numpy as np
-import pydicom
 from pydicom.dataset import FileDataset, FileMetaDataset
 from pydicom.uid import ExplicitVRLittleEndian, generate_uid
 
@@ -96,3 +95,15 @@ def test_measurements_of_known_disk():
     assert abs(m["perpendicular_diameter"] - 20.5) < 1.5
     assert abs(m["total"]["area_mm2"] - np.pi * 10**2) < 15
     assert m["location"]["side"] == "patient right"  # image left
+
+
+def test_ct_window_applies_only_to_hounsfield_data():
+    from oncovision.analysis.pipeline import apply_window
+    from oncovision.imaging.io import Scan
+
+    hu = Scan(channels={"image": np.array([[[-2000.0, 0.0, 3000.0]]])}, spacing=None, source_format="nifti")
+    apply_window(hu, get_profile("lung_ct"))
+    assert hu.channels["image"].tolist() == [[[-1000.0, 0.0, 400.0]]]
+    png = Scan(channels={"image": np.array([[[0.0, 255.0]]])}, spacing=None, source_format="image")
+    apply_window(png, get_profile("lung_ct"))
+    assert png.channels["image"].tolist() == [[[0.0, 255.0]]]

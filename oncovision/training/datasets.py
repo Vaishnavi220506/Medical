@@ -99,18 +99,17 @@ def find_busi_pairs(root: Path) -> list[tuple[Path, list[Path]]]:
 
 
 def find_mask_folder_pairs(images: Path, masks: Path) -> list[tuple[Path, list[Path]]]:
-    """Generic layout: ``images/<name>.<ext>`` with ``masks/<name>.png`` (label values 0..K)."""
+    """Generic layout: ``images/<name>.<ext>`` with binary ``masks/<name>.png``."""
     lookup = {p.stem: p for p in Path(masks).rglob("*") if p.suffix.lower() in IMAGE_EXT}
     return [(p, [lookup[p.stem]]) for p in sorted(Path(images).rglob("*")) if p.suffix.lower() in IMAGE_EXT and p.stem in lookup]
 
 
 class MaskSegmentationDataset(Dataset):
-    """Single-channel images with label masks. Binary masks (0/255) become label 1."""
+    """Single-channel images with binary masks (0 / 255): 1 = tumor, 0 = background."""
 
-    def __init__(self, pairs, image_size: int = 192, binary: bool = True):
+    def __init__(self, pairs, image_size: int = 192):
         self.pairs = pairs
         self.size = image_size
-        self.binary = binary
 
     def __len__(self):
         return len(self.pairs)
@@ -122,7 +121,7 @@ class MaskSegmentationDataset(Dataset):
         for mp in mask_paths:
             m = np.asarray(Image.open(mp).convert("L"))
             m = resize2d(m.astype(np.float32), (self.size, self.size), order=0)
-            mask = np.maximum(mask, (m > 127).astype(np.int64) if self.binary else m.astype(np.int64))
+            mask = np.maximum(mask, (m > 127).astype(np.int64))
         return torch.from_numpy(img[None].copy()).float(), torch.from_numpy(mask)
 
 
@@ -191,6 +190,15 @@ class SliceFileDataset(Dataset):
             img = data["image"].astype(np.float32) / 255.0
             lab = data["label"].astype(np.int64)
         return torch.from_numpy(img), torch.from_numpy(lab)
+
+
+def split_by_key(items: list, key, val_fraction: float, seed: int = 42) -> tuple[list, list]:
+    """Split so all items sharing ``key(item)`` (e.g. a patient) land on the same side."""
+    groups = sorted({key(it) for it in items})
+    random.Random(seed).shuffle(groups)
+    n_val = min(len(groups) - 1, int(round(len(groups) * val_fraction)))
+    val_groups = set(groups[: max(n_val, 0)])
+    return [it for it in items if key(it) not in val_groups], [it for it in items if key(it) in val_groups]
 
 
 def split_by_case(files: list[Path], val_fraction: float, seed: int = 42) -> tuple[list[Path], list[Path]]:

@@ -218,6 +218,8 @@ class Engine:
         model, meta = self.segmenters[profile.key]
         channels = tuple(meta.get("channels", profile.seg_channels))
         size = meta.get("image_size", profile.seg_size)
+        # Model output class i -> label value (binary whole-tumor models map 1 -> the "tumor" label).
+        to_label = np.array(meta.get("label_indices", range(profile.num_seg_classes)), dtype=np.uint8)
         x = channel_stack(scan, channels)  # (C, Z, H, W)
         _, z, h, w = x.shape
         labels = np.zeros((z, h, w), dtype=np.uint8)
@@ -241,12 +243,12 @@ class Engine:
         # Fast deterministic pass everywhere, then MC dropout where tumor was found.
         for start in range(0, len(active), BATCH):
             idx = active[start : start + BATCH]
-            labels[idx] = run(idx, 1).argmax(1)
+            labels[idx] = to_label[run(idx, 1).argmax(1)]
         tumor_slices = sorted({j for i in np.where(labels.any(axis=(1, 2)))[0] for j in (i - 1, i, i + 1) if 0 <= j < z})
         for start in range(0, len(tumor_slices), BATCH):
             idx = tumor_slices[start : start + BATCH]
             probs = run(idx, self.mc_samples)
-            labels[idx] = probs.argmax(1)
+            labels[idx] = to_label[probs.argmax(1)]
             uncertainty[idx] = _entropy(probs, axis=1)
         return Segmentation("model", labels, uncertainty)
 

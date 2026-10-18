@@ -82,7 +82,7 @@ def measure(
     total = size_of(lesion)
     result["total"] = total
     regions = []
-    for lbl in profile.seg_labels:
+    for lbl in profile.display_labels:
         mask = labels == lbl.index
         if mask.any():
             regions.append(

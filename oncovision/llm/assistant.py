@@ -46,7 +46,8 @@ finding means), and point people to their doctor for decisions, without repeatin
 Be upfront about limitations that apply to this study: low confidence or high uncertainty, review flags, \
 estimated pixel spacing, and especially demo mode (mode "demo" or method "heuristic"), where the result comes from a \
 simple image-processing detector rather than a trained model and the tumor type is unknown. Classifiers only know \
-their training classes. If someone describes urgent symptoms (sudden severe headache, seizure, weakness on one side, \
+their training classes. Some segmenters outline the whole tumor without separating sub-regions (label "tumor"); \
+do not describe necrosis, edema or enhancement for those. If someone describes urgent symptoms (sudden severe headache, seizure, weakness on one side, \
 loss of vision, confusion), tell them to seek emergency care."""
 
 

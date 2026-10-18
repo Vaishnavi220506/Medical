@@ -1,78 +1,62 @@
 # Datasets
 
-OncoVision is trained on public datasets. You download them yourself; most need a free account. **Check each dataset's license and citation requirements on its page before use**, and cite the dataset papers in any report or publication.
+OncoVision's models are trained on public datasets. The Hugging Face mirrors below download without an account, which is what the training notebook uses. **Check each dataset's license and cite the original papers** in any report or publication. All the mirrors used are CC-BY-4.0, except where noted.
 
-The training scripts read each dataset exactly as it is laid out after download. Folder names like `notumor`, `Bengin cases` or `Malignant cases` are mapped to OncoVision's class names automatically.
+The training scripts read each dataset as it is laid out after download. Folder names like `notumor`, `Bengin cases` or `Malignant cases` are mapped to OncoVision's class names automatically.
 
 ## Brain MRI
 
-### Classifier: Brain Tumor MRI Dataset (Kaggle)
-- Link: https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset
-- About 7,000 2D MRI images in 4 classes: glioma, meningioma, pituitary, no tumor. It mixes axial, coronal and sagittal slices and different sequences.
-- Layout:
-  ```
-  brain-tumor-mri-dataset/
-    Training/{glioma,meningioma,notumor,pituitary}/*.jpg
-    Testing/{glioma,meningioma,notumor,pituitary}/*.jpg
-  ```
+### Tumor type: Brain Tumor MRI Dataset (Masoud Nickparvar)
+- Hugging Face mirror: https://huggingface.co/datasets/BJyotibrat/Masoud-Nickparvar-Brain-Tumor-MRI-Dataset (CC-BY-4.0). Original: https://www.kaggle.com/datasets/masoudnickparvar/brain-tumor-mri-dataset
+- 7,200 2D MRI images in 4 classes (glioma, meningioma, pituitary, no tumor), with a fixed 5,600 / 1,600 train/test split. It mixes axial, coronal and sagittal views and several sequences. It combines the Figshare, SARTAJ and Br35H datasets.
+- Layout: `Training/{glioma,meningioma,notumor,pituitary}/*.jpg` and `Testing/...`
 
-### Segmenter: BraTS 2021 (RSNA-ASNR-MICCAI Brain Tumor Segmentation)
-- Official: https://www.synapse.org/brats (registration required). Kaggle mirror of the training set: https://www.kaggle.com/datasets/dschettler8845/brats-2021-task1
-- 1,251 pre-operative glioma cases. Each has 4 co-registered MRI sequences (FLAIR, T1, T1ce, T2), 1 mm isotropic, skull-stripped, plus an expert segmentation: 1 = necrotic core, 2 = edema, 4 = enhancing tumor. OncoVision maps 4 to 3.
-- Layout:
-  ```
-  BraTS2021_Training_Data/
-    BraTS2021_00000/
-      BraTS2021_00000_flair.nii.gz
-      BraTS2021_00000_t1.nii.gz
-      BraTS2021_00000_t1ce.nii.gz
-      BraTS2021_00000_t2.nii.gz
-      BraTS2021_00000_seg.nii.gz
-    ...
-  ```
-- BraTS 2023 naming (`*-t1n`, `*-t1c`, `*-t2w`, `*-t2f`, `*-seg`) is also supported.
-- Cite: Baid U. et al., "The RSNA-ASNR-MICCAI BraTS 2021 Benchmark on Brain Tumor Segmentation and Radiogenomic Classification", arXiv:2107.02314; Menze B. H. et al., IEEE TMI 2015.
+### Tumor outline: Figshare brain tumor dataset (Cheng et al.)
+- Hugging Face mirror: https://huggingface.co/datasets/MedOtter/Figshare_Brain_Tumor (CC-BY-4.0, parquet). Original: https://figshare.com/articles/dataset/brain_tumor_dataset/1512427
+- 3,064 T1 contrast-enhanced slices from 233 patients (glioma, meningioma, pituitary), each with an expert tumor mask. Pixel spacing is 0.49 mm. Patient-level folds are included.
+- Convert it with `python scripts/prepare_figshare.py --download --out data/figshare`, which writes `train/` and `test/` (patient-disjoint) image and mask folders.
+- Cite: Cheng J. et al., "Enhanced Performance of Brain Tumor Classification via Tumor Region Augmentation and Partition", PLoS ONE 10(10), 2015.
+
+### Tumor sub-regions (optional): BraTS 2021
+- Official: https://www.synapse.org/brats (registration required). Kaggle mirror: https://www.kaggle.com/datasets/dschettler8845/brats-2021-task1
+- 1,251 glioma cases, each with 4 co-registered sequences (FLAIR, T1, T1ce, T2) and expert labels: 1 necrotic core, 2 edema, 4 enhancing tumor. OncoVision maps 4 to 3.
+- Layout: `BraTS2021_Training_Data/BraTS2021_00000/BraTS2021_00000_{flair,t1,t1ce,t2,seg}.nii.gz`. BraTS 2023 names (`-t1n`, `-t1c`, `-t2w`, `-t2f`) also work.
+- Cite: Baid U. et al., arXiv:2107.02314 (2021); Menze B. H. et al., IEEE TMI 34(10), 2015.
 
 ## Breast ultrasound
 
-### Classifier + segmenter: BUSI (Breast Ultrasound Images Dataset)
-- Link: https://www.kaggle.com/datasets/aryashah2k/breast-ultrasound-images-dataset
-- 780 images from 600 women: 133 normal, 437 benign, 210 malignant, each with a lesion mask.
-- Layout:
-  ```
-  Dataset_BUSI_with_GT/
-    benign/benign (1).png, benign (1)_mask.png, ...
-    malignant/...
-    normal/...
-  ```
-  Images with several lesions have extra `_mask_1.png` files, which are merged automatically.
-- Cite: Al-Dhabyani W. et al., "Dataset of breast ultrasound images", Data in Brief 28 (2020) 104863.
+### BUSI (Breast Ultrasound Images Dataset)
+- Hugging Face mirror: https://huggingface.co/datasets/theshoaibme/panorgan-busi-breast-ultrasound (CC-BY-4.0). Original: https://scholar.cu.edu.eg/?q=afahmy/pages/dataset
+- 780 images from 600 women (133 normal, 437 benign, 210 malignant), each with a lesion mask. It is used for both the classifier and the segmenter.
+- Layout: `{benign,malignant,normal}/benign (1).png` with `benign (1)_mask.png`. Extra `_mask_1.png` files are merged.
+- Cite: Al-Dhabyani W. et al., "Dataset of breast ultrasound images", Data in Brief 28, 104863 (2020).
 
 ## Lung CT
 
-### Classifier: IQ-OTH/NCCD lung cancer dataset
-- Link: https://www.kaggle.com/datasets/hamdallak/the-iqothnccd-lung-cancer-dataset
-- About 1,100 CT slices in 3 classes: normal, benign, malignant.
-- Layout: `The IQ-OTHNCCD lung cancer dataset/{Normal cases,Bengin cases,Malignant cases}/*.jpg` (the "Bengin" spelling is the dataset's own).
+### LIDC-IDRI (nodules)
+- Original: https://www.cancerimagingarchive.net/collection/lidc-idri/ (CC BY 3.0). The bundled models used a subset (80 cases) of the NIfTI conversion at https://huggingface.co/datasets/totalol/lungct, which has nodule masks and a benign/malignant split by case. That mirror lists no license, so the original LIDC-IDRI terms apply.
+- `scripts/prepare_lidc.py` converts the volumes into 2D slices with the lung window (-1000 to 400 HU), in standard radiological orientation (the mirror's NIfTI headers swap the x/y axes, which the script corrects). It writes:
+  - `cls/{normal,benign,malignant}/<case>__<slice>.png`. Nodule slices take their case's label; "normal" slices are lung slices at least 10 slices away from any nodule.
+  - `seg/images` + `seg/masks`: nodule slices plus some nodule-free slices.
+- Note that "benign/malignant" here is a case-level label, not a biopsy result for each nodule, so treat the lung classifier as a rough guide.
+- Cite: Armato S. G. III et al., Medical Physics 38(2), 915-931 (2011).
 
-### Segmenter: any image + mask folder
-- LIDC-IDRI (https://www.cancerimagingarchive.net/collection/lidc-idri/) has radiologist nodule outlines for 1,018 CT scans. Export 2D slices and masks (for example with the `pylidc` package) into:
-  ```
-  lung/images/<name>.png
-  lung/masks/<name>.png     # 0 = background, 255 = nodule
-  ```
-  then train with `--format maskfolder --data lung/images --masks lung/masks`.
+### IQ-OTH/NCCD (alternative lung classifier data)
+- https://www.kaggle.com/datasets/hamdallak/the-iqothnccd-lung-cancer-dataset
+- About 1,100 CT slices: normal, benign, malignant. Layout: `{Normal cases,Bengin cases,Malignant cases}/*.jpg`.
 
 ## Scan-type router
 
-Build a folder with a few hundred images of each scan type, taken from the datasets above, plus an `other` folder with images OncoVision should reject (for example chest X-rays or knee MRI):
+The router learns to recognise the scan type and to reject unsupported images. Build one folder per type, for example:
 
 ```
 data/router/
-  brain_mri/   (from the Kaggle brain dataset)
-  breast_us/   (from BUSI, image files only, not masks)
-  lung_ct/     (from IQ-OTH/NCCD)
-  other/
+  brain_mri/   ~700 images (Kaggle brain + Figshare)
+  breast_us/   ~600 BUSI images (not the masks)
+  lung_ct/     ~600 LIDC slices
+  other/       ~450 images the app should reject: chest X-rays
+               (https://huggingface.co/datasets/hf-vision/chest-xray-pneumonia, CC-BY-4.0)
+               and bone X-rays (https://huggingface.co/datasets/Mahadih534/x-ray_bone-fracture-Dataset)
 ```
 
-Without a trained router, OncoVision guesses the scan type from DICOM metadata and image appearance, and you can always pick the type manually.
+Without a trained router, OncoVision falls back to DICOM metadata and simple image heuristics, and you can always pick the scan type manually.
