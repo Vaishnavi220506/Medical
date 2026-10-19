@@ -321,9 +321,19 @@ class Engine:
         factors = [s / target for s in scan.spacing] if scan.spacing else [1.0, 1.0, 1.0]
         if any(abs(f - 1) > 0.1 for f in factors):
             x = np.stack([ndimage.zoom(c, factors, order=1) for c in x])
-        t = torch.from_numpy(x).float().to(self.device)
-        probs = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
-        probs = probs.cpu().numpy()
+        # Crop to the brain exactly as in training (train_segmenter3d.prepare): the model's
+        # instance normalization was calibrated on brain-cropped volumes, and running it on a
+        # mostly-empty full volume degrades it badly (Dice 0.96 -> 0.44 on a test patient).
+        brain = x.max(0) > 0.02
+        probs_full = np.zeros((meta["num_classes"], *x.shape[1:]), dtype=np.float32)
+        probs_full[0] = 1.0
+        if brain.any():
+            idx = [np.where(brain.any(axis=a))[0] for a in ((1, 2), (0, 2), (0, 1))]
+            crop = tuple(slice(max(i[0] - 4, 0), i[-1] + 5) for i in idx)
+            t = torch.from_numpy(np.ascontiguousarray(x[(slice(None), *crop)])).float().to(self.device)
+            p = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
+            probs_full[(slice(None), *crop)] = p.cpu().numpy()
+        probs = probs_full
         if probs.shape[1:] != shape:
             probs = np.stack([ndimage.zoom(p, [a / b for a, b in zip(shape, p.shape)], order=1) for p in probs])[:, : shape[0], : shape[1], : shape[2]]
         probs = probs / np.clip(probs.sum(0, keepdims=True), 1e-6, None)

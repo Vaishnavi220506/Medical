@@ -1,4 +1,5 @@
 import { renderMeshes, disposeViewer } from "./viewer3d.js";
+import { SliceViewer } from "./sliceviewer.js";
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
@@ -21,6 +22,7 @@ const SUGGESTIONS = {
   doctor: ["Summarize the findings.", "Show the slice with the largest tumor.", "Compare with the prior study.", "How reliable is this result?"],
 };
 
+let viewer = null;
 const state = { files: [], study: null, slice: 0, layer: "overlay", sequence: "", audience: "patient", language: "English", profiles: [], busy: false };
 
 // ------------------------------------------------------------------ API helpers
@@ -97,6 +99,7 @@ function setupUpload() {
     if ($("#pixel-spacing").value) fd.append("pixel_spacing_mm", $("#pixel-spacing").value);
     state.busy = true;
     renderFileList();
+    showAnalyzing(state.files.map((f) => f.file));
     $("#analyze-btn").textContent = "Analyzing…";
     $("#upload-msg").textContent = "Running detection, segmentation and uncertainty estimation. Volumes can take a minute on CPU.";
     try {
@@ -107,12 +110,50 @@ function setupUpload() {
       openStudy(study);
     } catch (err) {
       $("#upload-msg").textContent = `Error: ${err.message}`;
+      if (!state.study) $("#empty").hidden = false;
+      else $("#study").hidden = false;
     } finally {
+      hideAnalyzing();
       state.busy = false;
       $("#analyze-btn").textContent = "Analyze scan";
       renderFileList();
     }
   });
+}
+
+// ------------------------------------------------------------------ analysis animation
+const STEPS = ["Reading and de-identifying the scan", "Detecting the scan type", "Outlining the tumor", "Classifying the tumor type",
+  "Estimating uncertainty", "Building the AI heatmap", "Measuring size and location"];
+let stepTimer = null;
+
+function showAnalyzing(files) {
+  const image = files.find((f) => /\.(png|jpe?g|bmp|webp)$/i.test(f.name));
+  const box = $("#analyzing");
+  const preview = $("#analyzing-preview");
+  preview.innerHTML = image
+    ? `<img src="${URL.createObjectURL(image)}" alt="Uploaded scan">`
+    : `<div class="volume-icon">${files.length > 1 ? `${files.length} files<br>3D / multi-sequence scan` : "3D scan"}</div>`;
+  $("#empty").hidden = true;
+  $("#study").hidden = true;
+  box.hidden = false;
+  let i = 0;
+  const list = $("#analyzing-steps");
+  list.innerHTML = STEPS.map((t) => `<li>${esc(t)}</li>`).join("");
+  // The steps run on the server in one request, so this only cycles a highlight
+  // through them; it is not real per-step progress.
+  const tick = () => {
+    [...list.children].forEach((li, j) => { li.className = j === i ? "active" : ""; });
+    i = (i + 1) % STEPS.length;
+  };
+  tick();
+  stepTimer = setInterval(tick, 1100);
+}
+
+function hideAnalyzing() {
+  clearInterval(stepTimer);
+  const img = $("#analyzing-preview img");
+  if (img) URL.revokeObjectURL(img.src);
+  $("#analyzing").hidden = true;
 }
 
 // ------------------------------------------------------------------ patients list
@@ -160,6 +201,9 @@ function openStudy(study) {
   $("#slice-slider").value = state.slice;
   $("#sequence-select").innerHTML = study.scan.sequences.map((s) => `<option value="${esc(s)}">${esc(s.toUpperCase())}</option>`).join("");
   $("#sequence-select").style.display = study.scan.sequences.length > 1 ? "" : "none";
+  const sp = study.scan.spacing_mm;
+  viewer.setSpacing(sp ? sp[1] : null, sp ? sp[2] : null);
+  viewer.fitted = false; // fit the new study to the window
   const pref = ["t1ce", "t1", "flair", "t2"].find((s) => study.scan.sequences.includes(s));
   if (pref) { $("#sequence-select").value = pref; state.sequence = pref; }
   updateSlice();
@@ -260,13 +304,45 @@ function updateSlice() {
   const s = state.study;
   if (!s) return;
   const seq = state.sequence ? `&sequence=${encodeURIComponent(state.sequence)}` : "";
-  $("#slice-img").src = `/api/studies/${s.id}/slice/${state.slice}.png?layer=${state.layer}${seq}`;
+  const url = (layer) => `/api/studies/${s.id}/slice/${state.slice}.png?layer=${layer}${seq}`;
+  viewer.show(url("original"), state.layer === "original" ? null : url(state.layer), `${s.id}:${state.slice}`).catch(() => {});
   $("#slice-label").textContent = `${state.slice + 1} / ${s.scan.shape[0]}`;
   $("#layer-help").textContent = LAYER_HELP[state.layer];
   $("#legend").style.display = state.layer === "overlay" ? "flex" : "none";
 }
 
+function stepSlice(delta) {
+  const s = state.study;
+  if (!s || s.scan.shape[0] < 2) return;
+  const next = Math.min(s.scan.shape[0] - 1, Math.max(0, state.slice + delta));
+  if (next === state.slice) return;
+  state.slice = next;
+  $("#slice-slider").value = next;
+  updateSlice();
+}
+
 function setupViewer() {
+  viewer = new SliceViewer($("#viewer-canvas"), {
+    onSliceStep: stepSlice,
+    onZoom: (pct) => { $("#zoom-level").textContent = `${pct}%`; },
+  });
+  $("#zoom-in").addEventListener("click", () => viewer.zoomBy(1.25));
+  $("#zoom-out").addEventListener("click", () => viewer.zoomBy(0.8));
+  $("#zoom-level").addEventListener("click", () => viewer.fit());
+  $("#ruler").addEventListener("click", (e) => {
+    const on = !viewer.measuring;
+    viewer.setMeasuring(on);
+    e.currentTarget.classList.toggle("active", on);
+  });
+  $("#clear-ruler").addEventListener("click", () => viewer.clearMeasurements());
+  $("#fullscreen").addEventListener("click", () => viewer.toggleFullscreen(document.querySelector(".viewer")));
+  const display = () => viewer.setDisplay({ opacity: +$("#opacity").value, brightness: +$("#brightness").value, contrast: +$("#contrast").value });
+  ["opacity", "brightness", "contrast"].forEach((id) => $(`#${id}`).addEventListener("input", display));
+  $("#reset-display").addEventListener("click", () => {
+    $("#opacity").value = 1; $("#brightness").value = 1; $("#contrast").value = 1;
+    display();
+  });
+
   $("#layer-buttons").addEventListener("click", (e) => {
     const layer = e.target.dataset.layer;
     if (!layer) return;

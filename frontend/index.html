@@ -77,6 +77,16 @@
         <p class="muted">No scans? Run <code>python scripts/make_demo_data.py</code> and upload the files from <code>demo_data/</code>.</p>
       </div>
 
+      <div id="analyzing" class="analyzing" hidden>
+        <div class="analyzing-preview" id="analyzing-preview"></div>
+        <div>
+          <h2>Analyzing scan…</h2>
+          <p class="muted">OncoVision is running these steps:</p>
+          <ol class="analyzing-steps" id="analyzing-steps"></ol>
+          <p class="hint">3D scans take up to a minute on a laptop CPU.</p>
+        </div>
+      </div>
+
       <div id="study" hidden>
         <div class="study-head">
           <div>
@@ -109,7 +119,24 @@
                 </div>
                 <select id="sequence-select" title="MRI sequence"></select>
               </div>
-              <div class="image-wrap"><img id="slice-img" alt="Scan slice"></div>
+              <div class="viewer-tools">
+                <div class="seg small">
+                  <button type="button" id="zoom-out" title="Zoom out (-)">−</button>
+                  <button type="button" id="zoom-level" title="Fit to window (double-click image or press 0)">100%</button>
+                  <button type="button" id="zoom-in" title="Zoom in (+)">+</button>
+                </div>
+                <button type="button" class="btn small" id="ruler" title="Measure: drag across the image">📏 Ruler</button>
+                <button type="button" class="btn small" id="clear-ruler" title="Remove ruler lines on this slice">Clear</button>
+                <button type="button" class="btn small" id="fullscreen" title="Fullscreen">⛶ Fullscreen</button>
+              </div>
+              <div class="image-wrap" id="viewer-canvas"></div>
+              <p class="hint viewer-help">Scroll to zoom · drag to move · double-click to reset · Shift+scroll or ↑/↓ to change slice · pinch on touch screens</p>
+              <div class="display-controls">
+                <label>Overlay opacity <input type="range" id="opacity" min="0" max="1" step="0.05" value="1"></label>
+                <label>Brightness <input type="range" id="brightness" min="0.4" max="2" step="0.05" value="1"></label>
+                <label>Contrast <input type="range" id="contrast" min="0.4" max="2.5" step="0.05" value="1"></label>
+                <button type="button" class="btn small" id="reset-display">Reset</button>
+              </div>
               <div class="slider-row" id="slider-row">
                 <span>Slice</span>
                 <input type="range" id="slice-slider" min="0" max="0" value="0">
