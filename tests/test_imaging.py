@@ -90,7 +90,7 @@ def test_measurements_of_known_disk():
     disk = ((yy - 100) ** 2 + (xx - 60) ** 2 <= 20**2).astype(np.uint8)[None]
     ref = np.zeros((1, 200, 200), dtype=np.float32)
     ref[0, 20:180, 20:180] = 1
-    m = measure(disk, ref, get_profile("breast_us"), (1.0, 0.5, 0.5), axial_volume=False)
+    m = measure(disk, ref, get_profile("lung_ct"), (1.0, 0.5, 0.5), axial_volume=False)
     assert abs(m["longest_diameter"] - 20.5) < 1.0  # 41 px * 0.5 mm
     assert abs(m["perpendicular_diameter"] - 20.5) < 1.5
     assert abs(m["total"]["area_mm2"] - np.pi * 10**2) < 15

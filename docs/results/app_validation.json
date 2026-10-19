@@ -1,0 +1,71 @@
+{
+  "brain_mri": {
+    "images": 400,
+    "rejected_as_unsupported": 0,
+    "routing_accuracy": 1.0,
+    "classification_accuracy_when_routed": 0.95,
+    "tumor_outlined_rate": 0.553,
+    "normal_false_outline_rate": 0.01,
+    "flagged_for_review_rate": 0.455,
+    "seconds_per_scan": 1.29,
+    "confusion": {
+      "glioma -> glioma": 84,
+      "glioma -> meningioma": 12,
+      "glioma -> no_tumor": 4,
+      "meningioma -> meningioma": 97,
+      "meningioma -> pituitary": 3,
+      "no_tumor -> glioma": 1,
+      "no_tumor -> no_tumor": 99,
+      "pituitary -> pituitary": 100
+    }
+  },
+  "breast_us": {
+    "images": 117,
+    "rejected_as_unsupported": 0,
+    "routing_accuracy": 1.0,
+    "classification_accuracy_when_routed": 0.846,
+    "tumor_outlined_rate": 0.918,
+    "normal_false_outline_rate": 0.2,
+    "flagged_for_review_rate": 0.282,
+    "seconds_per_scan": 0.76,
+    "confusion": {
+      "benign -> benign": 56,
+      "benign -> malignant": 8,
+      "benign -> normal": 2,
+      "malignant -> benign": 4,
+      "malignant -> malignant": 26,
+      "malignant -> normal": 1,
+      "normal -> benign": 2,
+      "normal -> malignant": 1,
+      "normal -> normal": 17
+    }
+  },
+  "lung_ct": {
+    "images": 221,
+    "rejected_as_unsupported": 221,
+    "routing_accuracy": 0.0,
+    "classification_accuracy_when_routed": 0.0,
+    "tumor_outlined_rate": null,
+    "normal_false_outline_rate": null,
+    "flagged_for_review_rate": 0.0,
+    "seconds_per_scan": 0.02,
+    "confusion": {
+      "benign -> rejected": 100,
+      "malignant -> rejected": 49,
+      "normal -> rejected": 72
+    }
+  },
+  "other": {
+    "images": 120,
+    "rejected_as_unsupported": 120,
+    "routing_accuracy": null,
+    "classification_accuracy_when_routed": null,
+    "tumor_outlined_rate": null,
+    "normal_false_outline_rate": null,
+    "flagged_for_review_rate": null,
+    "seconds_per_scan": 0.09,
+    "confusion": {
+      "other -> rejected": 120
+    }
+  }
+}

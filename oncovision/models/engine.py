@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 
 MAX_CAM_SLICES = 48
 BATCH = 16
-GUIDED_LOW = 0.2  # outline threshold when the classifier is confident a tumor is present
 GATE_NORMAL = 0.8  # no outline is reported when the classifier gives "normal" a higher probability
 MIN_TUMOR_PIXELS = 20
 
@@ -262,7 +261,7 @@ class Engine:
             idx = active[start : start + BATCH]
             store(idx, run(idx, 1))
         # Slices that contain tumor even at a low threshold get the MC-dropout pass.
-        candidates = np.where((fg_prob > GUIDED_LOW).any(axis=(1, 2)))[0]
+        candidates = np.where((fg_prob > (profile.guided_low_threshold or 0.5)).any(axis=(1, 2)))[0]
         tumor_slices = sorted({j for i in candidates for j in (i - 1, i, i + 1) if 0 <= j < z})
         for start in range(0, len(tumor_slices), BATCH):
             idx = tumor_slices[start : start + BATCH]
@@ -275,7 +274,8 @@ class Engine:
         """Use the classifier, the more reliable model, to guide the tumor outline.
 
         - Classifier confident a tumor is present: lower the outline threshold
-          so weak but real tumor signal is kept.
+          (hysteresis) so weak but real tumor signal is kept, for scan types where
+          that was shown to help (CancerProfile.guided_low_threshold).
         - Classifier confident the scan is normal: do not report an outline;
           the region is kept out of the measurements and explained in a note.
 
@@ -294,15 +294,22 @@ class Engine:
                 "normal, so it is not reported as a tumor. Look at the AI heatmap if you want to check it."
             )
             return Segmentation(seg.method, np.zeros_like(seg.labels), seg.uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, 1.0, note)
-        if p_normal >= 0.2:
+        if p_normal >= 0.2 or profile.guided_low_threshold is None:
             return seg
-        mask = seg.fg_prob > GUIDED_LOW
-        if not mask.any():
+        low = seg.fg_prob > profile.guided_low_threshold
+        if not low.any():
             return seg
-        # Keep the strongest connected region(s) rather than every faint blob.
-        comp, n = ndimage.label(mask)
-        peak = np.asarray(ndimage.maximum(seg.fg_prob, comp, range(1, n + 1)))
-        mask = np.isin(comp, np.where(peak >= max(0.5, peak.max() * 0.8))[0] + 1)
+        # Hysteresis: the lower threshold may only extend regions the model already
+        # found; if it found none, keep the single strongest region.
+        comp, n = ndimage.label(low)
+        seeds = seg.labels > 0
+        if seeds.any():
+            keep = np.unique(comp[seeds & low])
+            keep = keep[keep > 0]
+        else:
+            peak = np.asarray(ndimage.maximum(seg.fg_prob, comp, range(1, n + 1)))
+            keep = np.array([int(np.argmax(peak)) + 1]) if peak.max() >= 0.35 else np.array([], dtype=int)
+        mask = np.isin(comp, keep)
         if mask.sum() < MIN_TUMOR_PIXELS or mask.sum() <= (seg.labels > 0).sum():
             return seg
         labels = np.where(mask, seg.fg_label, 0).astype(np.uint8)
@@ -310,7 +317,7 @@ class Engine:
         binary = (-(p * np.log(p) + (1 - p) * np.log(1 - p)) / math.log(2)).astype(np.float32)
         uncertainty = np.where(mask & (seg.uncertainty == 0), binary, seg.uncertainty).astype(np.float32)
         note = "Outline threshold lowered because the classifier is confident a tumor is present; check the boundary."
-        return Segmentation(seg.method, labels, uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, GUIDED_LOW, note)
+        return Segmentation(seg.method, labels, uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, profile.guided_low_threshold, note)
 
     # ------------------------------------------------------------------ classification
     def key_slices(self, scan: Scan, seg: Segmentation, limit: int = 5) -> list[int]:

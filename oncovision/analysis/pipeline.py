@@ -104,9 +104,10 @@ def analyze(
             "yet, so it cannot give a reliable result. Choose the scan type manually to run the experimental demo detector."
         )
     if route.profile is None:
+        supported = [p.display_name for p in PROFILES.values() if engine.demo_mode or engine.has_models(p.key)]
         raise UnsupportedScanError(
-            "This scan does not look like one of the supported types "
-            f"({', '.join(p.display_name for p in PROFILES.values())}). Pick the scan type manually to analyze anyway."
+            f"This scan does not look like one of the supported types ({', '.join(supported)}). "
+            "Pick the scan type manually to analyze anyway."
         )
     profile = get_profile(route.profile)
     apply_window(scan, profile)

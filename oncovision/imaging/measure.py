@@ -99,7 +99,10 @@ def measure(
         core = lesion
     areas = core.sum(axis=(1, 2))
     best = int(np.argmax(areas))
-    longest, perpendicular = _diameters(core[best], dy, dx)
+    # Diameters are measured on the largest single lesion, as in RANO / RECIST.
+    comp, n = ndimage.label(core[best])
+    main = comp == (int(np.argmax(ndimage.sum(core[best], comp, range(1, n + 1)))) + 1) if n > 1 else core[best]
+    longest, perpendicular = _diameters(main, dy, dx)
     result["key_slice"] = best
     result["longest_diameter"] = round(longest, 1)
     result["perpendicular_diameter"] = round(perpendicular, 1)
@@ -120,12 +123,14 @@ def measure(
         row_frac = (cy - rows[0]) / max(rows[-1] - rows[0], 1)
         col_frac = (cx - cols[0]) / max(cols[-1] - cols[0], 1)
         offset = (cx - midline) * dx
-        location: dict = {"distance_from_midline": round(abs(offset), 1)}
-        if abs(offset) < 0.04 * (cols[-1] - cols[0]) * dx:
-            location["side"] = "midline"
-        else:
-            # Radiological convention: image left = patient right.
-            location["side"] = "patient right" if offset < 0 else "patient left"
+        location: dict = {}
+        if profile.organ != "breast":  # an ultrasound image has no patient midline
+            location["distance_from_midline"] = round(abs(offset), 1)
+            if abs(offset) < 0.04 * (cols[-1] - cols[0]) * dx:
+                location["side"] = "midline"
+            else:
+                # Radiological convention: image left = patient right.
+                location["side"] = "patient right" if offset < 0 else "patient left"
         vertical = "upper" if row_frac < 0.4 else "lower" if row_frac > 0.6 else "middle"
         horizontal = "left" if col_frac < 0.4 else "right" if col_frac > 0.6 else "central"
         location["image_position"] = f"{vertical} {horizontal} part of the image"
