@@ -260,4 +260,14 @@ async def unhandled(request, exc):
     return JSONResponse({"detail": "Internal error. See server logs."}, status_code=500)
 
 
+@app.middleware("http")
+async def revalidate_frontend(request, call_next):
+    # Browsers must check for new frontend files on every load (cheap: unchanged files
+    # answer 304), so an updated app never runs with stale JavaScript from the cache.
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
 app.mount("/", StaticFiles(directory=settings.frontend_dir, html=True), name="frontend")
