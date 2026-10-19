@@ -83,3 +83,36 @@ def test_2d_upload_and_errors(client, demo_dir):
 def test_frontend_served(client):
     res = client.get("/")
     assert res.status_code == 200 and "OncoVision" in res.text
+
+
+def test_hover_explanations(client, demo_dir):
+    study = _upload(client, demo_dir, "t0", "2026-01-10", label="Case-Hover")
+    sid, c = study["id"], study["measurements"]["centroid"]
+    z, r, col = round(c["slice"]), round(c["row"]), round(c["col"])
+    tumor = client.get(f"/api/studies/{sid}/probe", params={"slice": z, "row": r, "col": col}).json()
+    assert tumor["kind"] == "tumor" and tumor["what"] and tumor["effect"]
+
+    shape = study["scan"]["shape"]
+    far = {"slice": z, "row": shape[1] // 2, "col": shape[2] - 1 - col}  # mirror side of the head
+    area = client.get(f"/api/studies/{sid}/probe", params=far).json()
+    assert area["kind"] in ("area", "outside")
+    if area["kind"] == "area":
+        assert area["distance"] > 0 and "tumor" in area["effect"].lower()
+
+    # Points along a line of sight: the first one inside the organ or tumor is explained.
+    pts = f"{z},0,0;{z},{r},{col}"
+    assert client.get(f"/api/studies/{sid}/probe", params={"points": pts}).json()["kind"] == "tumor"
+    assert client.get(f"/api/studies/{sid}/probe", params={"slice": 999, "row": 0, "col": 0}).json() == {"inside": False}
+    assert client.get(f"/api/studies/{sid}/probe").status_code == 400
+
+    mesh = client.get(f"/api/studies/{sid}/mesh").json()
+    assert mesh["organ"] == "brain" and mesh["slice_plane"] and mesh["parts"]["edema"]["effect"]
+
+
+def test_pseudo_3d_shape_and_image_plane(client, demo_dir):
+    res = client.post("/api/analyze", files=[("files", ("us.png", (demo_dir / "breast_us.png").read_bytes(), "image/png"))], data={"scan_type": "breast_us"})
+    mesh = client.get(f"/api/studies/{res.json()['id']}/mesh").json()
+    names = [m["name"] for m in mesh["meshes"]]
+    assert mesh["pseudo"] and mesh["image_plane"]["size"][0] > 0
+    if "lesion" in names:
+        assert "possible_extent" in names and mesh["depth_ratio"]["median"] < mesh["depth_ratio"]["p90"]

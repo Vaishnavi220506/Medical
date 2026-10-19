@@ -16,15 +16,18 @@ from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
 from .. import __version__
+from ..analysis.explain import BREAST_MRI_TUMOR, PARTS, explain_point, type_note
 from ..analysis.longitudinal import compare, timeline
 from ..analysis.pipeline import UnsupportedScanError, analyze, get_engine, get_store
 from ..config import settings
 from ..imaging.io import ScanLoadError, anonymize_dicom
+from ..imaging.measure import lung_rads
 from ..imaging.mesh import build_meshes, build_pseudo_meshes
 from ..imaging.render import LAYERS, render_layer, to_png
 from ..llm import assistant, report
 from ..llm.tools import ToolContext, slice_panel
 from ..models.registry import PROFILES, get_profile
+from ..utils import plain
 
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 
@@ -167,7 +170,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v5.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v7.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
@@ -177,9 +180,46 @@ def mesh(sid: str):
         if s["scan"]["is_volume"]
         else build_pseudo_meshes(base, arrays["labels"], get_profile(s["profile"]["key"]), s["scan"]["spacing_mm"])
     )
-    text = json.dumps(data)
+    m = s["measurements"]
+    data["regions"] = {r["name"]: r for r in m.get("regions", [])} if s["scan"]["is_volume"] else {}
+    data["parts"] = {k: {"what": v[0], "effect": v[1]} for k, v in PARTS.items()}
+    data["type_note"] = type_note(s)
+    if s["profile"]["key"] == "breast_mri":
+        data["parts"]["tumor"] = {"what": BREAST_MRI_TUMOR[0], "effect": BREAST_MRI_TUMOR[1]}
+    if s["scan"]["is_volume"] and m.get("nodules"):
+        dz, dy, dx = s["scan"]["spacing_mm"]
+        data["nodules"] = [
+            {**{k: n[k] for k in ("longest_diameter", "short_diameter", "mean_diameter", "volume_mm3", "side", "key_slice")},
+             "center": [n["centroid"]["col"] * dx, n["centroid"]["slice"] * dz, -n["centroid"]["row"] * dy],
+             "lung_rads": lung_rads(n["mean_diameter"])["category"]}
+            for n in m["nodules"]
+        ]
+    text = json.dumps(plain(data))
     cache.write_text(text)
     return Response(text, media_type="application/json")
+
+
+@app.get("/api/studies/{sid}/probe")
+def probe(sid: str, slice: int = Query(0), row: int | None = Query(None), col: int | None = Query(None), points: str = Query("")):
+    """What is at this point of the scan, in plain words (for hover explanations).
+
+    ``points`` ("z,r,c;z,r,c;...") are candidates along the line of sight in the 3D view; the
+    first one inside the organ (or tumor) is explained.
+    """
+    s = _study(sid)
+    if points:
+        candidates = [tuple(int(float(v)) for v in p.split(",")) for p in points.split(";")[:16] if p.count(",") == 2]
+    elif row is not None and col is not None:
+        candidates = [(slice, row, col)]
+    else:
+        raise HTTPException(400, "Give row and col, or points.")
+    first = None
+    for z, r, c in candidates:
+        info = explain_point(s, s["created_at"], z, r, c)
+        first = first or (info if info.get("inside") else None)
+        if info.get("kind") in ("tumor", "area"):
+            return info
+    return first or {"inside": False}
 
 
 @app.get("/api/studies/{sid}/compare/{other_id}")

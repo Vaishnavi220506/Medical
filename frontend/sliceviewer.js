@@ -9,7 +9,7 @@ const MIN_ZOOM = 0.5;
 const MAX_ZOOM = 20;
 
 export class SliceViewer {
-  constructor(container, { onSliceStep, onZoom } = {}) {
+  constructor(container, { onSliceStep, onZoom, onHover } = {}) {
     this.container = container;
     this.canvas = document.createElement("canvas");
     this.canvas.className = "slice-canvas";
@@ -18,6 +18,8 @@ export class SliceViewer {
     container.replaceChildren(this.canvas);
     this.ctx = this.canvas.getContext("2d");
     this.onSliceStep = onSliceStep || (() => {});
+    // Called with ([x, y] image pixel, mouse event) while the pointer is over the image, null when it leaves.
+    this.onHover = onHover || (() => {});
     this.onZoom = onZoom || (() => {});
 
     this.base = null; // HTMLImageElement of the plain scan
@@ -252,6 +254,7 @@ export class SliceViewer {
         const [ix, iy] = this._toImage(...pos);
         const inside = ix >= 0 && iy >= 0 && ix < this.base.naturalWidth && iy < this.base.naturalHeight;
         this.hover = inside ? [Math.floor(ix), Math.floor(iy)] : null;
+        if (!this.pointers.size) this.onHover(this.hover, e);
       }
       if (!this.pointers.has(e.pointerId)) {
         this.draw();
@@ -293,7 +296,7 @@ export class SliceViewer {
     };
     c.addEventListener("pointerup", end);
     c.addEventListener("pointercancel", end);
-    c.addEventListener("pointerleave", () => { this.hover = null; this.draw(); });
+    c.addEventListener("pointerleave", () => { this.hover = null; this.onHover(null); this.draw(); });
     c.addEventListener("dblclick", () => this.fit());
 
     c.addEventListener("keydown", (e) => {

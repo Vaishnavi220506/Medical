@@ -1,3 +1,6 @@
+/* Elements with the hidden attribute stay hidden even if a class sets a display mode. */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #0b1120;
   --panel: #111a2e;
@@ -88,6 +91,7 @@ button.primary { background: var(--accent-2); border-color: var(--accent-2); col
 .seg button { border: none; border-radius: 0; background: transparent; padding: 6px 10px; font-size: 12.5px; }
 .seg button.active { background: var(--accent-2); color: #04121f; font-weight: 600; }
 .seg.small button { padding: 5px 10px; }
+.viewer.card { position: relative; }
 .image-wrap { background: #000; border-radius: 10px; aspect-ratio: 1 / 1; overflow: hidden; position: relative; touch-action: none; }
 .slice-canvas { display: block; cursor: grab; outline: none; }
 .slice-canvas.dragging { cursor: grabbing; }
@@ -219,3 +223,15 @@ tr:last-child td { border-bottom: none; }
 .nodule-table th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; }
 .lung-rads { border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); border-radius: 10px; padding: 10px 12px; margin: 4px 0 10px; }
 .lung-rads div { margin-top: 4px; }
+
+/* Hover explanations (2D viewer and 3D view) */
+.hover-card { position: absolute; z-index: 20; max-width: 300px; pointer-events: none; padding: 10px 12px; border-radius: 12px;
+  background: rgba(8, 13, 28, 0.92); border: 1px solid rgba(125, 211, 252, 0.35); box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  color: #e2e8f0; font-size: 12.5px; line-height: 1.45; backdrop-filter: blur(6px); }
+.hover-card b { display: flex; align-items: center; gap: 7px; font-size: 13px; margin-bottom: 4px; }
+.hover-card b i { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 8px currentColor; }
+.hover-card b i.area { background: #67e8f9; color: #67e8f9; }
+.hover-card p { margin: 3px 0 0; color: #cbd5e1; }
+.hover-card p.effect { color: #fcd34d; }
+.hover-card p.type { color: #c4b5fd; }
+.hover-card p.extra { color: #94a3b8; font-size: 11.5px; }

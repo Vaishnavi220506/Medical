@@ -50,7 +50,9 @@ async function loadStatus() {
     : `<span class="pill warn" title="Set ANTHROPIC_API_KEY in .env to enable the assistant and AI-written reports.">LLM key not set</span>`);
   const dev = health.models.device_name || health.models.device;
   pills.push(health.models.device === "cpu"
-    ? `<span class="pill" title="No GPU in use. 3D scans take about a minute. With an NVIDIA GPU, run.bat sets it up automatically.">Running on CPU</span>`
+    ? (health.models.gpu_problem
+      ? `<span class="pill warn" title="${esc(health.models.gpu_problem)}. Close the app and run run.bat again: it installs a PyTorch build for this GPU.">Running on CPU (GPU needs update)</span>`
+      : `<span class="pill" title="No GPU in use. 3D scans take about a minute. With an NVIDIA GPU, run.bat sets it up automatically.">Running on CPU</span>`)
     : `<span class="pill good" title="AI models run on the graphics card.">GPU: ${esc(dev)}</span>`);
   $("#status").innerHTML = pills.join("");
 
@@ -345,6 +347,11 @@ function setupViewer() {
   viewer = new SliceViewer($("#viewer-canvas"), {
     onSliceStep: stepSlice,
     onZoom: (pct) => { $("#zoom-level").textContent = `${pct}%`; },
+    onHover: (px, e) => {
+      if (!px || !state.study) return hideCard("#hover-2d");
+      const [col, row] = px;
+      probe(state.study.id, state.slice, row, col, (info) => showCard("#hover-2d", info, e, $("#viewer-canvas")));
+    },
   });
   $("#zoom-in").addEventListener("click", () => viewer.zoomBy(1.25));
   $("#zoom-out").addEventListener("click", () => viewer.zoomBy(0.8));
@@ -415,7 +422,12 @@ async function load3D() {
   msg.textContent = "Building 3D surfaces…";
   try {
     const data = await api(`/api/studies/${s.id}/mesh`);
-    viewer3d = await renderMeshes($("#three-container"), data);
+    const slice = (i, layer) => `/api/studies/${s.id}/slice/${i}.png?layer=${layer}`;
+    viewer3d = await renderMeshes($("#three-container"), data, {
+      sliceUrl: data.pseudo ? null : (i) => slice(i, "overlay"),
+      imageUrl: data.pseudo ? slice(0, "original") : null,
+    });
+    viewer3d.onHover = (hit) => explain3D(s, data, hit);
     viewer3d.onAutoRotate = (on) => $("#three-rotate").classList.toggle("active", on);
     msg.textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
     if (data.pseudo) {
@@ -429,7 +441,8 @@ async function load3D() {
       const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
       return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
-    }).join("");
+    }).join("") + (data.pseudo && data.image_plane
+      ? `<label class="legend-chip"><input type="checkbox" data-mesh="${data.meshes.length}" checked><span class="dot" style="background:#e2e8f0;color:#e2e8f0"></span>Your scan image</label>` : "");
     $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : `Cut away ${(data.anatomy_label || "brain").split(" ")[0].toLowerCase()}`;
     $("#three-slice").disabled = !!data.pseudo;
     viewer3d.setSlice($("#three-slice").checked && !data.pseudo ? state.slice : null);
@@ -440,6 +453,86 @@ async function load3D() {
       ? "Could not load the 3D library (needs an internet connection the first time)."
       : `Could not load the 3D view: ${err.message}`;
   }
+}
+
+// ------------------------------------------------------------------ hover explanations
+// One request in flight at a time; the newest pointer position wins.
+const probeState = { busy: false, next: null };
+async function probe(id, slice, row, col, done) {
+  // Same spot as the last answer: reuse it instead of asking again.
+  const key = `${id}:${JSON.stringify(slice)}:${row}:${col}`;
+  if (probeState.lastKey === key && probeState.last) { done(probeState.last); return; }
+  probeState.next = { id, slice, row, col, done, key };
+  if (probeState.busy) return;
+  probeState.busy = true;
+  while (probeState.next) {
+    const q = probeState.next;
+    probeState.next = null;
+    try {
+      const where = Array.isArray(q.slice) ? `points=${q.slice.map((p) => p.join(",")).join(";")}` : `slice=${q.slice}&row=${q.row}&col=${q.col}`;
+      const info = await api(`/api/studies/${q.id}/probe?${where}`);
+      probeState.lastKey = q.key;
+      probeState.last = info;
+      if (!probeState.next) q.done(info);
+    } catch { /* ignore hover errors */ }
+  }
+  probeState.busy = false;
+}
+
+function showCard(sel, info, e, host) {
+  const card = $(sel);
+  if (!info || info.inside === false || !info.title) return hideCard(sel);
+  const extra = [];
+  if (info.size) extra.push(info.size);
+  if (info.probability != null) extra.push(`AI tumor probability here: ${Math.round(info.probability * 100)}%`);
+  else if (info.attention != null && info.kind === "tumor") extra.push(`AI attention here: ${Math.round(info.attention * 100)}%`);
+  const dot = info.color ? `<i style="background:rgb(${info.color.join(",")})"></i>` : `<i class="area"></i>`;
+  card.innerHTML = `<b>${dot}${esc(info.title)}</b>${info.what ? `<p>${esc(info.what)}</p>` : ""}${info.effect ? `<p class="effect">${esc(info.effect)}</p>` : ""}${info.type_note ? `<p class="type">${esc(info.type_note)}</p>` : ""}${extra.length ? `<p class="extra">${extra.map(esc).join(" · ")}</p>` : ""}`;
+  card.hidden = false;
+  const r = (card.offsetParent || host).getBoundingClientRect();
+  const x = Math.min(e.clientX - r.left + 16, r.width - card.offsetWidth - 8);
+  const y = e.clientY - r.top + 16 + card.offsetHeight > r.height ? e.clientY - r.top - card.offsetHeight - 12 : e.clientY - r.top + 16;
+  card.style.left = `${Math.max(8, x)}px`;
+  card.style.top = `${Math.max(8, y)}px`;
+}
+
+function hideCard(sel) {
+  const card = $(sel);
+  if (card) card.hidden = true;
+}
+
+function explain3D(s, data, hit) {
+  if (!hit) return hideCard("#hover-3d");
+  const ev = { clientX: hit.clientX, clientY: hit.clientY };
+  const host = $("#three-container");
+  const part = data.parts?.[hit.name];
+  if (hit.name !== "anatomy" && part) {
+    const meshInfo = data.meshes.find((m) => m.name === hit.name) || {};
+    const info = { kind: "tumor", title: meshInfo.description || hit.name, what: part.what, effect: part.effect, color: meshInfo.color,
+      type_note: hit.name === "possible_extent" ? null : data.type_note };
+    const region = data.regions?.[hit.name];
+    if (region?.volume_cm3 != null) info.size = `${(+region.volume_cm3).toFixed(1)} cm³ (${region.percent_of_tumor}% of the tumor)`;
+    if (data.nodules?.length) {
+      // Several nodules share one surface: name the one nearest to the pointer.
+      const [x, y, z] = hit.point;
+      const n = data.nodules.reduce((a, b) => (Math.hypot(...b.center.map((c, i) => c - [x, y, z][i])) < Math.hypot(...a.center.map((c, i) => c - [x, y, z][i])) ? b : a));
+      info.size = `Nodule ${data.nodules.indexOf(n) + 1}: ${n.longest_diameter} × ${n.short_diameter} mm, ${n.side}, size-based Lung-RADS ${n.lung_rads}`;
+    }
+    if (data.pseudo && hit.name !== "possible_extent") info.size = "Shape estimated from one image (most likely depth)";
+    return showCard("#hover-3d", info, ev, host);
+  }
+  // Organ surface: walk a few points inward along the line of sight; the server explains the
+  // first one that is inside the organ.
+  const toVoxel = (p) => {
+    if (data.pseudo) {
+      const px = data.voxel_mm[0], f = data.image_factor || 1;
+      return [0, Math.round((data.shape[0] - 1 - p[1] / px) * f), Math.round((p[0] / px) * f)];
+    }
+    const [dz, dy, dx] = data.voxel_mm;
+    return [Math.round(p[1] / dz), Math.round(-p[2] / dy), Math.round(p[0] / dx)];
+  };
+  const pts = [3, 8, 15, 25, 40].map((mm) => toVoxel(hit.point.map((v, i) => v + hit.dir[i] * mm)));
+  probe(s.id, pts, pts[0][1], pts[0][2], (info) => showCard("#hover-3d", info, ev, host));
 }
 
 function setup3D() {

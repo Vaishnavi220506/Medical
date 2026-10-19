@@ -71,10 +71,29 @@ class Segmentation:
     model: str = ""  # which trained segmenter produced it (single-image / multi-sequence / 3d)
 
 
+GPU_PROBLEM = ""  # why a GPU that is present is not used (shown in the app header)
+
+
+def _gpu_works(device: torch.device) -> bool:
+    """Run a tiny 2D and 3D convolution: PyTorch builds without kernels for a new GPU
+    (e.g. an RTX 50-series card with a CUDA 12.6 build) report the GPU but fail here."""
+    global GPU_PROBLEM
+    try:
+        x = torch.rand(1, 1, 8, 8, 8, device=device)
+        torch.nn.functional.conv3d(x, torch.rand(2, 1, 3, 3, 3, device=device))
+        torch.nn.functional.conv2d(x[:, :, 0], torch.rand(2, 1, 3, 3, device=device))
+        torch.cuda.synchronize(device) if device.type == "cuda" else None
+        return True
+    except Exception as exc:  # noqa: BLE001 - any failure means: use the CPU instead
+        GPU_PROBLEM = f"{torch.cuda.get_device_name(device) if device.type == 'cuda' else device.type} found but not usable with this PyTorch build"
+        log.warning("GPU found but not usable (%s); using the CPU. Install a PyTorch build for this GPU (run.bat does this).", exc)
+        return False
+
+
 def _pick_device(pref: str) -> torch.device:
     if pref != "auto":
         return torch.device(pref)
-    if torch.cuda.is_available():
+    if torch.cuda.is_available() and _gpu_works(torch.device("cuda")):
         return torch.device("cuda")
     if getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
         return torch.device("mps")
@@ -185,7 +204,7 @@ class Engine:
 
     def status(self) -> dict:
         name = torch.cuda.get_device_name(self.device) if self.device.type == "cuda" else {"mps": "Apple GPU"}.get(self.device.type, "CPU")
-        out = {"device": str(self.device), "device_name": name, "router": self.router is not None, "profiles": {}}
+        out = {"device": str(self.device), "device_name": name, "gpu_problem": GPU_PROBLEM, "router": self.router is not None, "profiles": {}}
         for key in PROFILES:
             clf, seg = self.classifiers.get(key), self.segmenters.get(key)
             out["profiles"][key] = {

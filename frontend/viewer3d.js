@@ -43,7 +43,8 @@ const STYLE = {
   necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
 };
 
-export async function renderMeshes(container, data) {
+// opts.sliceUrl(i): image of axial slice i (3D scans); opts.imageUrl: the uploaded image (2D -> 3D preview).
+export async function renderMeshes(container, data, opts = {}) {
   disposeViewer();
   const THREE = await import("three");
   const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
@@ -111,7 +112,7 @@ export async function renderMeshes(container, data) {
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = 10;
     } else {
-      const style = STYLE[m.name] || { opacity: 0.9, roughness: 0.35, renderOrder: 2 };
+      const style = STYLE[m.name] || { opacity: m.opacity ?? 0.9, roughness: 0.35, renderOrder: m.opacity < 0.5 ? 4 : 2 };
       const color = new THREE.Color(`rgb(${m.color.join(",")})`);
       const material = new THREE.MeshPhysicalMaterial({
         color,
@@ -131,8 +132,38 @@ export async function renderMeshes(container, data) {
       mesh.renderOrder = style.renderOrder;
     }
     mesh.userData.targetOpacity = mesh.material.opacity ?? 1;
+    mesh.userData.name = m.name;
     group.add(mesh);
     handles.push(mesh);
+  }
+
+  // Scan images in 3D: glowing "light-box" planes (additive blending makes the black background vanish).
+  const loader = new THREE.TextureLoader();
+  // Colour is added; alpha is left alone, so the (transparent) canvas does not turn opaque black
+  // where the image is dark.
+  const imageMaterial = (opacity) => new THREE.MeshBasicMaterial({
+    transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
+    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
+    blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor,
+    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
+  });
+  const loadInto = (material, url) => loader.load(url, (tex) => {
+    tex.colorSpace = THREE.SRGBColorSpace;
+    material.map?.dispose();
+    material.map = tex;
+    material.needsUpdate = true;
+  });
+  let imagePlane = null;
+  if (data.image_plane && opts.imageUrl) {
+    // 2D -> 3D preview: the uploaded image stands in the middle of the estimated volume.
+    const [w, h] = data.image_plane.size;
+    imagePlane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), imageMaterial(0.5));
+    imagePlane.position.set(...data.image_plane.center);
+    imagePlane.renderOrder = 0; // drawn before the tumor, so the tumor keeps its colour
+    imagePlane.userData = { name: "image", targetOpacity: 0.5 };
+    loadInto(imagePlane.material, opts.imageUrl);
+    group.add(imagePlane);
+    handles.push(imagePlane);
   }
 
   const box = new THREE.Box3().setFromObject(group);
@@ -149,19 +180,21 @@ export async function renderMeshes(container, data) {
   grid.material.opacity = 0.55;
   scene.add(grid);
 
-  // Slice plane: where the 2D viewer currently is.
+  // Slice plane: where the 2D viewer currently is, showing that slice's image (3D scans).
+  const planeSize = data.slice_plane?.size || [size.x, size.z];
   const sliceMesh = new THREE.Mesh(
-    new THREE.PlaneGeometry(size.x * 1.15, size.z * 1.15),
-    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.PlaneGeometry(planeSize[0], planeSize[1]),
+    opts.sliceUrl ? imageMaterial(0.9) : new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }),
   );
-  sliceMesh.rotation.x = -Math.PI / 2;
+  sliceMesh.rotation.x = Math.PI / 2; // image top (row 0, anterior) towards +z
   const sliceEdge = new THREE.LineSegments(
     new THREE.EdgesGeometry(sliceMesh.geometry),
     new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.8 }),
   );
   sliceMesh.add(sliceEdge);
   sliceMesh.visible = false;
-  scene.add(sliceMesh);
+  sliceMesh.renderOrder = 6;
+  group.add(sliceMesh);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
@@ -211,12 +244,64 @@ export async function renderMeshes(container, data) {
     setSlice: (index) => {
       if (index == null) { sliceMesh.visible = false; return; }
       sliceMesh.visible = true;
-      sliceMesh.position.set(0, index * voxel[0] - center.y, 0);
+      const [cx, cz] = data.slice_plane?.center_xz || [center.x, center.z];
+      sliceMesh.position.set(cx, index * voxel[0], cz);
+      if (opts.sliceUrl && sliceMesh.userData.index !== index) {
+        sliceMesh.userData.index = index;
+        loadInto(sliceMesh.material, opts.sliceUrl(index));
+      }
     },
+    onHover: null, // ({name, point, dir, clientX, clientY}) in data coordinates (mm), or null
     screenshot: () => renderer.domElement.toDataURL("image/png"),
   };
 
+  // Hover: find what is under the pointer. Tumor parts win over the possible-extent shell, which
+  // wins over the organ surface (seen through it); clipped-away parts of the organ are ignored.
+  const raycaster = new THREE.Raycaster();
+  const ndc = new THREE.Vector2();
+  let pointer = null;
+  let hovered = null;
+  renderer.domElement.addEventListener("pointermove", (e) => {
+    const r = renderer.domElement.getBoundingClientRect();
+    ndc.set(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
+    pointer = { x: e.clientX, y: e.clientY, buttons: e.buttons };
+  });
+  renderer.domElement.addEventListener("pointerleave", () => { pointer = null; setHover(null); viewer.onHover?.(null); });
+  const rank = (name) => (name === "anatomy" ? 2 : name === "possible_extent" ? 1 : 0);
+  const glow = (mesh, on) => {
+    if (!mesh) return;
+    if (mesh.material.uniforms) mesh.material.uniforms.strength.value = on ? 1.8 : 1.0;
+    else if (mesh.material.emissive) mesh.material.emissiveIntensity = on ? 3.0 : 1.0;
+  };
+  const setHover = (mesh) => {
+    if (mesh === hovered) return;
+    glow(hovered, false);
+    hovered = mesh;
+    glow(hovered, true);
+    renderer.domElement.style.cursor = mesh ? "help" : "";
+  };
+  const pick = () => {
+    if (!pointer || pointer.buttons) return;
+    raycaster.setFromCamera(ndc, camera);
+    const hits = raycaster.intersectObjects(handles.filter((h) => h.visible && h.userData.name !== "image"), false)
+      .filter((h) => h.object.userData.name !== "anatomy" || cutPlane.distanceToPoint(h.point) >= 0)
+      .sort((a, b) => rank(a.object.userData.name) - rank(b.object.userData.name) || a.distance - b.distance);
+    const hit = hits[0];
+    setHover(hit?.object || null);
+    if (!viewer.onHover) return;
+    if (!hit) { viewer.onHover(null); return; }
+    viewer.onHover({
+      name: hit.object.userData.name,
+      point: group.worldToLocal(hit.point.clone()).toArray(),
+      dir: raycaster.ray.direction.toArray(),
+      clientX: pointer.x,
+      clientY: pointer.y,
+    });
+  };
+  let lastPick = 0;
+
   const tick = (now) => {
+    if (now - lastPick > 60) { lastPick = now; pick(); }
     if (flight) {
       const t = Math.min(1, (now - flight.start) / flight.ms);
       const ease = 1 - Math.pow(1 - t, 3);

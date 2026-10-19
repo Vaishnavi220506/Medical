@@ -128,4 +128,4 @@ def test_pseudo_3d_inflation():
     lab = np.zeros((1, 128, 128), np.uint8)
     lab[0][(yy - 64) ** 2 + (xx - 64) ** 2 <= 15**2] = 4
     out = build_pseudo_meshes(img, lab, PROFILES["brain_mri"], (1.0, 0.5, 0.5))
-    assert out["pseudo"] and [m["name"] for m in out["meshes"]] == ["anatomy", "tumor"]
+    assert out["pseudo"] and [m["name"] for m in out["meshes"]] == ["anatomy", "possible_extent", "tumor"]
