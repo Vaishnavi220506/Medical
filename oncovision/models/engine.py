@@ -184,7 +184,8 @@ class Engine:
         return (multi, "multi-sequence") if multi else (None, "")
 
     def status(self) -> dict:
-        out = {"device": str(self.device), "router": self.router is not None, "profiles": {}}
+        name = torch.cuda.get_device_name(self.device) if self.device.type == "cuda" else {"mps": "Apple GPU"}.get(self.device.type, "CPU")
+        out = {"device": str(self.device), "device_name": name, "router": self.router is not None, "profiles": {}}
         for key in PROFILES:
             clf, seg = self.classifiers.get(key), self.segmenters.get(key)
             out["profiles"][key] = {
@@ -365,7 +366,15 @@ class Engine:
                 crop = tuple(slice(max(i[0] - 4, 0), i[-1] + 5) for i in idx)
         if crop is not None:
             t = torch.from_numpy(np.ascontiguousarray(x[(slice(None), *crop)])).float().to(self.device)
-            p = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
+            try:
+                # On a GPU the mirrored second pass (test-time augmentation) is cheap and slightly more accurate.
+                p = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
+            except (RuntimeError, NotImplementedError):
+                if self.device.type != "mps":
+                    raise
+                log.warning("3D model not supported on the Apple GPU; running it on the CPU")
+                p = sliding_window_3d(model.cpu(), t.cpu(), patch=meta.get("patch", 128), overlap=0.25, flip_tta=False)
+                model.to(self.device)
             probs_full[(slice(None), *crop)] = p.cpu().numpy()
         probs = probs_full
         if probs.shape[1:] != shape:

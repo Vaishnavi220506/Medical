@@ -214,14 +214,15 @@ def sliding_window_3d(model: nn.Module, volume: torch.Tensor, patch: int = 128, 
     probs = None
     norm = torch.zeros(shape_p, device=volume.device)
     model.eval()
-    with torch.no_grad():
+    # Half precision on NVIDIA GPUs: about twice as fast, same outlines in practice.
+    with torch.no_grad(), torch.autocast("cuda", dtype=torch.float16, enabled=volume.is_cuda):
         for z in starts[0]:
             for y in starts[1]:
                 for x in starts[2]:
                     tile = vol[None, :, z : z + patch, y : y + patch, x : x + patch]
-                    p = torch.softmax(model(tile), dim=1)
+                    p = torch.softmax(model(tile).float(), dim=1)
                     if flip_tta:
-                        p = (p + torch.softmax(model(tile.flip(-1)), dim=1).flip(-1)) / 2
+                        p = (p + torch.softmax(model(tile.flip(-1)).float(), dim=1).flip(-1)) / 2
                     if probs is None:
                         probs = torch.zeros((p.shape[1], *shape_p), device=volume.device)
                     probs[:, z : z + patch, y : y + patch, x : x + patch] += p[0] * weight

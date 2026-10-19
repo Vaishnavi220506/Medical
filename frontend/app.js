@@ -48,7 +48,10 @@ async function loadStatus() {
   pills.push(health.llm_configured
     ? `<span class="pill good">LLM ready</span>`
     : `<span class="pill warn" title="Set ANTHROPIC_API_KEY in .env to enable the assistant and AI-written reports.">LLM key not set</span>`);
-  pills.push(`<span class="pill">${esc(health.models.device)}</span>`);
+  const dev = health.models.device_name || health.models.device;
+  pills.push(health.models.device === "cpu"
+    ? `<span class="pill" title="No GPU in use. 3D scans take about a minute. With an NVIDIA GPU, run.bat sets it up automatically.">Running on CPU</span>`
+    : `<span class="pill good" title="AI models run on the graphics card.">GPU: ${esc(dev)}</span>`);
   $("#status").innerHTML = pills.join("");
 
   $("#scan-type").innerHTML = `<option value="auto">Auto-detect</option>` + profiles.map((p) => `<option value="${esc(p.key)}">${esc(p.display_name)}</option>`).join("");
