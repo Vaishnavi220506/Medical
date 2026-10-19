@@ -76,13 +76,15 @@ All numbers are on **held-out real scans the models never trained on**, split by
 |---|---|---|---|---|
 | Scans tested | 400 | 117 | 221 | 120 |
 | Scan type recognised | **100%** | **100%** | refused (no model yet) | **100% rejected** |
-| Correct diagnosis | **95.0%** | **84.6%** | – | – |
-| Tumor outlined | 65.7%¹ | 91.8% | – | – |
-| Normal scans wrongly outlined | **1%** | 20% | – | – |
+| Correct diagnosis | **95.0%** | **88.0%**² | – | – |
+| Tumor outlined | 65.7%¹ | 92.8%² | – | – |
+| Normal scans wrongly outlined | **1%** | 10%² | – | – |
 | Flagged for expert review | 45% | 30% | – | – |
 | Time per image (4-core CPU) | 0.6 s | 0.7 s | – | – |
 
 ¹ With the retrained 2D brain outline model, on 100 test images per class (glioma 84%, meningioma 90%, pituitary 23%); the previous model outlined 61% of the same images. Other brain numbers are from the 400-image run.
+
+² Breast models retrained on BUSI + BUS-BRA + BUS-UCLM, measured on the same 117 BUSI validation images (previous model: 84.6% and 20%).
 
 ### 3D brain tumor model (BraTS 2023, whole 3D volumes)
 
@@ -11066,9 +11068,11 @@ endsolid tumor
 |---|---|---|
 | Brain tumor type, ResNet-18 | 1,600 test MRIs (Masoud Nickparvar dataset) | **95.7% accuracy**, macro-F1 0.956. No tumor 99.8% recall, pituitary 99.8%, meningioma 98%, glioma 85% (mostly confused with meningioma) |
 | Brain tumor outline, U-Net | 542 slices from held-out Figshare patients; 240 slices (all views, T1ce / FLAIR / T2) from held-out BraTS patients | **Dice 0.68** (Figshare), **0.67** (BraTS; previous Figshare-only model 0.17); in the app, false outlines on 1% of normal MRIs |
-| Breast lesion type, ResNet-18 | 117 BUSI images (validation split) | **85.5% accuracy** (normal 90%, benign 85%, malignant 84% recall) |
-| Breast lesion outline, U-Net | 117 BUSI images (validation split) | **Dice 0.61** |
-| Scan-type router | brain / breast / lung / other | 100% on validation and on the end-to-end sets above |
+| Breast lesion type, ResNet-18 | 508 held-out images from 3 datasets (BUSI, BUS-BRA, BUS-UCLM; patient-disjoint) | **84.5% accuracy**, macro-F1 0.84. Per dataset: BUSI 88%, BUS-BRA 87% (malignant recall 91%; BUSI-only model: 54% / 23%), BUS-UCLM 77% (malignant recall 52%; BUSI-only model: 5%) |
+| Breast lesion outline, U-Net | same held-out images, in the full app | **Dice 0.68** BUSI, **0.86** BUS-BRA, 0.38 BUS-UCLM; normal images wrongly outlined 10% (BUSI), 11% (BUS-UCLM) |
+| Breast tumor on MRI, 3D U-Net | 100 held-out MAMA-MIA patients (DCE-MRI) | **Dice 0.62**; in the full app on 30 of them: main tumor found in **29/30 (97%)**, Dice 0.54, about 1.6 false spots per scan |
+| Breast tumor on MRI, 2D U-Net (single slices) | slices of the same held-out patients | **Dice 0.53** |
+| Scan-type router | brain MRI / breast ultrasound / breast MRI / lung CT / other | held-out: breast MRI volumes 30/30, brain 124/124, breast ultrasound 150/150, lung CT 28/28, other images rejected 120/120 |
 | 3D brain tumor U-Net | 24 held-out BraTS 2023 scans (whole volumes) | **Dice 0.88 / 0.89 / 0.86** (whole tumor / core / enhancing) |
 
 <details>
@@ -11089,7 +11093,7 @@ Brain tumor outlines (held-out Figshare patients) and breast lesion outlines (BU
 
 - **2D brain outlines (single JPG/PNG images) are missing on about a third of tumors in the end-to-end test.** The outline model is trained on Figshare (contrast-enhanced T1), normal brains and BraTS slices in all three views and sequences; it now outlines 84% of gliomas and 90% of meningiomas, but misses most small pituitary tumors (23% outlined). When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. With full 3D MRI (four sequences) the 3D model is used instead and is far more accurate (Dice 0.88).
 - **The classifier guides the outline.** When the classifier is confident a scan is normal (above 80%), no outline is reported and a note explains why. For brain, when it is confident a tumor is present, a lower threshold extends the outline the model already found. Both rules were checked against expert masks and only kept where they helped.
-- **Breast normals:** 20% still get a small outline. BUSI has only 133 normal images.
+- **Breast normals:** about 10% still get a small outline. BUS-UCLM images (a different scanner) remain the hardest: 52% of malignant lesions recognised.
 - **Lung CT is not included yet.** A lung model was trained on 80 LIDC-IDRI cases but did no better than chance on held-out patients, so it was not shipped. Lung CTs are recognised and refused with a clear message (choosing the type manually runs a clearly labeled experimental detector). A proper lung model needs nodule-centred patches and 3D context.
 - Review-flag thresholds were calibrated on these same held-out sets. Confidence below 70% or MC-dropout spread above 0.08 flags about 70% of breast errors and 30% of brain errors, while flagging only 10% and 2% of correct answers. Brain errors are mostly confident glioma ↔ meningioma confusions.
 - Public datasets are curated. Real-world scans (other scanners, protocols, populations) will usually score lower.
@@ -11105,7 +11109,7 @@ Trained weights are already in `weights/`. To retrain or improve them, use the o
 | Brain classifier | Brain Tumor MRI (Masoud Nickparvar, 7,200 images) | `python -m oncovision.training.train_classifier --profile brain_mri --train-dir data/brain/Training --test-dir data/brain/Testing --pretrained` |
 | Brain segmenter | Figshare (3,064 slices) + normal brains + BraTS 2023 slices (all views and sequences) | `python scripts/prepare_figshare.py --download --out data/figshare --negatives data/brain/Training/notumor` and `python scripts/prepare_brats_slices2d.py --data data/BraTS2023 --out data/brats2d`, put both image/mask folders together, then `python -m oncovision.training.train_segmenter --profile brain_mri --format maskfolder --data <images> --masks <masks>` |
 | 3D brain tumor (sub-regions) | BraTS 2023 (1,251 scans, 4 sequences) | Kaggle notebook [`notebooks/train_3d_brats.ipynb`](notebooks/train_3d_brats.ipynb), or `python -m oncovision.training.train_segmenter3d --data .../BraTS2023 --prepared-dir /tmp/brats3d` (needs a GPU) |
-| Breast classifier + segmenter | BUSI (780 images) | `train_classifier --profile breast_us --train-dir data/busi --pretrained` and `train_segmenter --profile breast_us --format busi --data data/busi` |
+| Breast classifier + segmenter | BUSI + BUS-BRA + BUS-UCLM (3,338 images) | `python scripts/prepare_breast.py --download --busi data/busi --out data/breast`, then `train_classifier --profile breast_us --train-dir data/breast/train/cls --test-dir data/breast/test/cls --pretrained` and `train_segmenter --profile breast_us --format maskfolder --data data/breast/train/seg/images --masks data/breast/train/seg/masks` |
 | Scan-type router | one folder per scan type | `python -m oncovision.training.train_classifier --router --train-dir data/router --pretrained` |
 
 Then measure: `python -m oncovision.training.evaluate classifier|segmenter ...` (figures for your report) and `python scripts/validate_app.py ...` (end to end). Export with `python scripts/export_weights.py --src <run>/weights --dst weights`.
@@ -11209,7 +11213,7 @@ The tests cover loading and orientation, DICOM anonymization, heuristic detectio
 
 ## Datasets and credits
 
-Models were trained on public datasets (licenses and citations in [docs/DATASETS.md](docs/DATASETS.md)): the Brain Tumor MRI Dataset (M. Nickparvar; CC-BY-4.0 mirror), the Figshare brain tumor dataset (Cheng et al., 2015; CC-BY-4.0), BUSI (Al-Dhabyani et al., 2020; CC-BY-4.0 mirror), LIDC-IDRI (Armato et al., 2011) and chest/bone X-ray sets for the "other" class. Please cite them if you use these models.
+Models were trained on public datasets (licenses and citations in [docs/DATASETS.md](docs/DATASETS.md)): the Brain Tumor MRI Dataset (M. Nickparvar; CC-BY-4.0 mirror), the Figshare brain tumor dataset (Cheng et al., 2015; CC-BY-4.0), BUSI (Al-Dhabyani et al., 2020; CC-BY-4.0 mirror), BUS-BRA (Gómez-Flores et al., 2024; CC-BY-4.0), BUS-UCLM (Vallez et al., 2025; CC-BY-4.0), MAMA-MIA breast MRI (Garrucho et al., 2025; CC BY-NC 4.0, non-commercial), BraTS 2023 (CC-BY-4.0), LIDC-IDRI (Armato et al., 2011) and chest/bone X-ray sets for the "other" class. Please cite them if you use these models.
 
 ## Roadmap
 

@@ -36,10 +36,23 @@ The training scripts read each dataset as it is laid out after download. Folder 
 - Layout: `{benign,malignant,normal}/benign (1).png` with `benign (1)_mask.png`. Extra `_mask_1.png` files are merged.
 - Cite: Al-Dhabyani W. et al., "Dataset of breast ultrasound images", Data in Brief 28, 104863 (2020).
 
+### More breast ultrasound: BUS-BRA and BUS-UCLM (used for the shipped breast models)
+- **BUS-BRA** (Gómez-Flores W. et al., Medical Physics 2024): 1,875 biopsy-proven images (1,268 benign, 607 malignant) from 1,064 patients, with lesion masks. https://zenodo.org/records/8231412 (CC-BY-4.0).
+- **BUS-UCLM** (Vallez N. et al., Scientific Data 2025): 683 images from 38 patients, 419 of them normal, with lesion masks. https://data.mendeley.com/datasets/7fvgj4jsp7 (CC-BY-4.0).
+- `python scripts/prepare_breast.py --download --busi data/busi --out data/breast` combines them with BUSI into patient-disjoint train and test sets. The BUSI test images are the validation images of the earlier BUSI-only models, so old and new models can be compared on them.
+
+## Breast MRI
+
+### MAMA-MIA (3D breast tumors)
+- 1,506 breast cancer DCE-MRI scans from four collections (Duke, ISPY1, ISPY2, NACT), each with an expert 3D outline of the primary tumor. Hugging Face redistribution: https://huggingface.co/datasets/YongchengYAO/MAMA-MIA-Lite. **License: CC BY-NC 4.0 (non-commercial use only).**
+- Used by `notebooks/train_breast_mri3d.ipynb` / `oncovision.training.train_breast_mri3d` (3D model) and `export_slices` (2D model). All cases are cancers, so the models find and measure tumors but cannot tell benign from malignant.
+- Cite: Garrucho L. et al., "A large-scale multicenter breast cancer DCE-MRI benchmark dataset with expert segmentations", Scientific Data 12, 453 (2025).
+
 ## Lung CT
 
 ### LIDC-IDRI (nodules)
 - Original: https://www.cancerimagingarchive.net/collection/lidc-idri/ (CC BY 3.0). The bundled models used a subset (80 cases) of the NIfTI conversion at https://huggingface.co/datasets/totalol/lungct, which has nodule masks and a benign/malignant split by case. That mirror lists no license, so the original LIDC-IDRI terms apply.
+- The full set (641 CTs) is used by `notebooks/train_lung3d.ipynb` / `oncovision.training.train_lung3d`, which streams the CTs one at a time.
 - `scripts/prepare_lidc.py` converts the volumes into 2D slices with the lung window (-1000 to 400 HU), in standard radiological orientation (the mirror's NIfTI headers swap the x/y axes, which the script corrects). It writes:
   - `cls/{normal,benign,malignant}/<case>__<slice>.png`. Nodule slices take their case's label; "normal" slices are lung slices at least 10 slices away from any nodule.
   - `seg/images` + `seg/masks`: nodule slices plus some nodule-free slices.
