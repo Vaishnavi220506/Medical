@@ -51,6 +51,10 @@ class CancerProfile:
     # (hysteresis from the model's own outline). None keeps the default 0.5. Enabled
     # only where it improved Dice against expert masks on held-out scans.
     guided_low_threshold: float | None = None
+    # No outline is reported when the classifier gives "normal" more than this
+    # probability. Chosen per scan type on held-out scans (breast: 0.7 cut false
+    # outlines on normal scans from 20% to ~15% without losing real lesions).
+    gate_normal: float = 0.8
     datasets: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -116,6 +120,7 @@ PROFILES: dict[str, CancerProfile] = {
         seg_labels=(SegLabel(1, "lesion", (236, 72, 153), "Breast lesion"),),
         lesion_polarity="dark",
         review_uncertainty=0.7,
+        gate_normal=0.7,
         reporting_system="BI-RADS (Breast Imaging Reporting and Data System)",
         datasets=("BUSI - Breast Ultrasound Images Dataset",),
     ),

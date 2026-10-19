@@ -33,7 +33,6 @@ log = logging.getLogger(__name__)
 
 MAX_CAM_SLICES = 48
 BATCH = 16
-GATE_NORMAL = 0.8  # no outline is reported when the classifier gives "normal" a higher probability
 MIN_TUMOR_PIXELS = 20
 
 
@@ -403,7 +402,7 @@ class Engine:
         if seg.fg_prob is None or seg.model == "3d" or cls.method != "model" or profile.normal_class not in cls.probabilities:
             return seg
         p_normal = cls.probabilities[profile.normal_class]
-        if p_normal > GATE_NORMAL:
+        if p_normal > profile.gate_normal:
             if not seg.labels.any():
                 return seg
             note = (
