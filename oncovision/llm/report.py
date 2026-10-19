@@ -71,6 +71,10 @@ def _template_narrative(study: dict, comparison: dict | None, audience: str) -> 
         if loc.get("approximate_region"):
             findings += f", {loc['approximate_region']}"
         findings += f". Classifier result: {cls['display']} (confidence {cls['confidence']:.0%})."
+        if m.get("nodules"):
+            findings += f" {len(m['nodules'])} nodule(s) of 3 mm or more; the largest measures {m['nodules'][0]['longest_diameter']} x {m['nodules'][0]['short_diameter']} {m['units']}."
+        if m.get("lung_rads"):
+            findings += f" Size-based Lung-RADS category {m['lung_rads']['category']} ({m['lung_rads']['meaning'].lower()}); {m['lung_rads']['assumptions']}"
     else:
         findings = f"No tumor region was segmented. Classifier result: {cls['display']} (confidence {cls['confidence']:.0%})."
     comp = "No prior study available."
@@ -196,7 +200,9 @@ def build_pdf(store: Store, study: dict, comparison: dict | None, audience: str 
     pdf.image(io.BytesIO(png), w=pdf.epw)
     pdf.set_font("Helvetica", "I", 8)
     pdf.set_text_color(90, 90, 90)
-    pdf.cell(0, 5, f"Key slice {idx}: original, segmentation overlay, Grad-CAM heatmap", new_x="LMARGIN", new_y="NEXT")
+    # Detection-only results (3D models, lung CT, breast MRI) show the outline model's probability map.
+    heat = "lesion probability map" if "tumor" in study["classification"]["probabilities"] else "Grad-CAM heatmap"
+    pdf.cell(0, 5, f"Key slice {idx}: original, segmentation overlay, {heat}", new_x="LMARGIN", new_y="NEXT")
 
     def heading(title: str):
         pdf.ln(3)
@@ -237,6 +243,12 @@ def build_pdf(store: Store, study: dict, comparison: dict | None, audience: str 
         for r in m.get("regions", []):
             val = r.get("volume_cm3", r.get("area_mm2", r.get("voxels", r.get("pixels"))))
             rows.append((r["description"], f"{val} ({r['percent_of_tumor']}% of tumor)"))
+        for i, n in enumerate(m.get("nodules", [])[:5], 1):
+            vol = f", {n['volume_mm3']} mm3" if n.get("volume_mm3") is not None else ""
+            rows.append((f"Nodule {i}", f"{n['longest_diameter']} x {n['short_diameter']} {u}{vol}, {n['side']}, slice {n['key_slice'] + 1}"))
+        if m.get("lung_rads"):
+            lr = m["lung_rads"]
+            rows.append(("Lung-RADS (size only)", f"{lr['category']}: {lr['meaning']}. {lr['typical_management']}"))
     table(rows)
 
     heading("Findings")
