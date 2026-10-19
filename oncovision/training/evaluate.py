@@ -9,6 +9,10 @@ Segmenter (writes metrics.json, segmentation_examples.png)::
     python -m oncovision.training.evaluate segmenter --profile breast_us --format busi --data data/Dataset_BUSI_with_GT
     python -m oncovision.training.evaluate segmenter --profile brain_mri --format brats --prepared-dir data/brats_slices
 
+Whole 3D MRI volumes through the app's engine (uses whichever outline model the app would pick)::
+
+    python -m oncovision.training.evaluate volumes --profile brain_mri --data data/brats_test
+
 Output goes to ``reports/<profile>_<kind>/`` unless ``--out`` is given.
 """
 
@@ -179,9 +183,51 @@ def eval_segmenter(args, device) -> dict:
     return metrics
 
 
+def eval_volumes(args, device) -> dict:
+    """Per-patient Dice on whole BraTS volumes, run through the app's Engine exactly as uploads are."""
+    from ..imaging.io import Scan, load_nifti
+    from ..models.engine import Engine
+    from .common import dice_score
+    from .datasets import _brats_file
+
+    aliases = {"flair": ("flair", "t2f"), "t1": ("t1", "t1n"), "t1ce": ("t1ce", "t1c"), "t2": ("t2", "t2w")}
+    profile = get_profile(args.profile)
+    engine = Engine(args.weights.parent.parent if args.weights else settings.weights_dir)
+    cases = sorted(p for p in Path(args.data).iterdir() if p.is_dir() and _brats_file(p, "seg") is not None)
+    rows, model_used = [], set()
+    for case in cases:
+        channels, spacing = {}, None
+        for seq, names in aliases.items():
+            f = next((f for n in names if (f := _brats_file(case, n)) is not None), None)
+            if f is not None:
+                scan = load_nifti(f.read_bytes())
+                channels[seq], spacing = scan.channels["image"], scan.spacing
+        truth = load_nifti(_brats_file(case, "seg").read_bytes()).channels["image"].round().astype(np.uint8)
+        truth[truth == 4] = 3
+        seg = engine.segment(Scan(channels=channels, spacing=spacing, source_format="nifti"), profile)
+        model_used.add(seg.model)
+        p = seg.labels
+        rows.append({
+            "case": case.name,
+            "whole_tumor": dice_score(p > 0, truth > 0),
+            "tumor_core": dice_score(np.isin(p, (1, 3)), np.isin(truth, (1, 3))),
+            "enhancing_tumor": dice_score(p == 3, truth == 3),
+            "volume_true_cm3": round(float((truth > 0).sum()) / 1000, 2),
+            "volume_pred_cm3": round(float((p > 0).sum()) / 1000, 2),
+        })
+        print(f"{case.name}: WT {rows[-1]['whole_tumor']:.3f} TC {rows[-1]['tumor_core']:.3f} ET {rows[-1]['enhancing_tumor']:.3f}", flush=True)
+    keys = ("whole_tumor", "tumor_core", "enhancing_tumor")
+    out = {k: round(float(np.mean([r[k] for r in rows])), 4) for k in keys}
+    out["median_whole_tumor"] = round(float(np.median([r["whole_tumor"] for r in rows])), 4)
+    vt, vp = np.array([r["volume_true_cm3"] for r in rows]), np.array([r["volume_pred_cm3"] for r in rows])
+    out["volume_error_median_percent"] = round(float(np.median(np.abs(vp - vt) / np.maximum(vt, 0.1)) * 100), 1)
+    out.update(n_volumes=len(rows), outline_model=sorted(model_used), per_case=rows)
+    return out
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("kind", choices=("classifier", "segmenter"))
+    parser.add_argument("kind", choices=("classifier", "segmenter", "volumes"))
     parser.add_argument("--profile", required=True)
     parser.add_argument("--data", type=Path, help="Test images (classifier) or dataset folder (segmenter)")
     parser.add_argument("--format", choices=("brats", "busi", "maskfolder"))
@@ -201,9 +247,10 @@ def main() -> None:
     args.out = args.out or Path("reports") / f"{args.profile}_{args.kind}"
     args.out.mkdir(parents=True, exist_ok=True)
     device = pick_device()
-    metrics = eval_classifier(args, device) if args.kind == "classifier" else eval_segmenter(args, device)
+    run = {"classifier": eval_classifier, "segmenter": eval_segmenter, "volumes": eval_volumes}[args.kind]
+    metrics = run(args, device)
     (args.out / "metrics.json").write_text(json.dumps(metrics, indent=2))
-    print(json.dumps({k: v for k, v in metrics.items() if k not in ("per_class", "confusion_matrix")}, indent=2))
+    print(json.dumps({k: v for k, v in metrics.items() if k not in ("per_class", "confusion_matrix", "per_case")}, indent=2))
     print(f"Report files written to {args.out.resolve()}")
 
 
