@@ -119,8 +119,11 @@ def analyze(
             scan.spacing_estimated = True
 
     seg = engine.segment(scan, profile)
-    cls, heat = engine.classify(scan, profile, seg)
-    seg = engine.refine(seg, cls, profile)
+    if seg.model == "3d":
+        cls, heat = engine.classify_from_3d(seg, profile)
+    else:
+        cls, heat = engine.classify(scan, profile, seg)
+        seg = engine.refine(seg, cls, profile)
     reference = scan.primary(profile.classifier_channel_preference)
     measurements = measure(
         seg.labels, reference, profile, scan.spacing, axial_volume=scan.source_format in ("nifti", "dicom")

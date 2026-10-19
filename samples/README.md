@@ -15,7 +15,7 @@ Real glioma patients from the BraTS 2023 training data. **None of OncoVision's m
 |---|---|
 | `patient1/` | Large tumor (about 135 cm³ including edema) |
 | `patient2/` | Smaller tumor (about 34 cm³) |
-| `patient3_two_scans/scan1` and `scan2_later` | The **same patient scanned twice**. The tumor grew from about 12 cm³ to 23 cm³ between the scans, so this is a real example for tracking over time. |
+| `patient3_two_scans/scan1` and `scan2_later` | The **same patient scanned twice**. The total tumor stayed about the same (about 104 cm³ both times) while the active, enhancing part shrank from about 44 to 36 cm³. This makes a real example for tracking over time; OncoVision reports it as stable disease (it measures 102 → 108 cm³). |
 
 **How to try it:**
 1. Drag **all four files of one folder** into the upload box together (the sequences are detected from the file names). Enter a patient label and click **Analyze**. The 3D model takes about 1 minute on a laptop CPU.

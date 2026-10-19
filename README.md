@@ -8,10 +8,10 @@ OncoVision takes a brain MRI or breast ultrasound scan and:
 
 1. **Detects the scan type** automatically and rejects images it doesn't support.
 2. **Classifies** it: glioma / meningioma / pituitary tumor / no tumor for brain MRI, and normal / benign / malignant for breast ultrasound, with a confidence score.
-3. **Outlines the tumor.** It can also separate the three BraTS sub-regions (necrotic core, edema, enhancing tumor) once a BraTS-trained model is added.
+3. **Outlines the tumor**, and for **3D MRI** (all four sequences: FLAIR, T1, T1ce, T2) it uses a **true 3D U-Net** that separates the necrotic core, edema and active (enhancing) tumor in 3D.
 4. **Measures** it: area or volume, RANO-style longest and perpendicular diameters, side, approximate brain region, depth from the skin for ultrasound.
 5. **Explains itself**: Grad-CAM heatmaps show what the classifier looked at, and Monte-Carlo dropout uncertainty maps show where the model is unsure. Uncertain or contradictory results are **flagged for expert review**.
-6. **Shows the tumor in 3D** in the browser for volumetric scans (NIfTI, DICOM series).
+6. **Interactive viewer**: zoom, pan, scroll through slices, brightness/contrast, overlay opacity, a ruler in mm, fullscreen, and a **3D view** of the tumor parts you can rotate.
 7. **Tracks change over time** across a patient's scans, with simplified RANO / RECIST response categories.
 8. **Answers questions** through a Claude-powered assistant that sees the scan, can open other slices, compare scans, and look up facts in a curated medical knowledge base with cited sources. It has a **doctor mode** and a **patient mode**, and answers in **12 languages** (including Hindi, Tamil, Telugu, Kannada, Malayalam, Marathi and Bengali).
 9. **Writes PDF reports**: a radiology-style report for doctors or a plain-language summary for patients.
@@ -46,7 +46,7 @@ uvicorn oncovision.api.main:app
 Or `docker compose up --build`.
 </details>
 
-**Try it:** upload any brain MRI or breast ultrasound image (JPG, PNG, DICOM or NIfTI). For a 3D and over-time demo, run `python scripts/make_demo_data.py`, upload the four `demo_data/brain_t0_*.nii.gz` files together with patient label `Demo-001`, then the `brain_t1_*` files with the same label and a later date. Those are synthetic phantoms, which the brain models were not trained on, so treat their results as a software demo only.
+**Try it:** upload any brain MRI or breast ultrasound image (JPG, PNG, DICOM or NIfTI). For real **3D brain MRI**, use the scans in [`samples/brain_mri_3d/`](samples/README.md): drag the four files of one patient in together, then open the **3D** tab. For a 3D and over-time demo, run `python scripts/make_demo_data.py`, upload the four `demo_data/brain_t0_*.nii.gz` files together with patient label `Demo-001`, then the `brain_t1_*` files with the same label and a later date. Those are synthetic phantoms, which the brain models were not trained on, so treat their results as a software demo only.
 
 ---
 
@@ -66,6 +66,19 @@ All numbers are on **held-out real scans the models never trained on**, split by
 | Flagged for expert review | 45% | 30% | – | – |
 | Time per image (4-core CPU) | 0.6 s | 0.7 s | – | – |
 
+### 3D brain tumor model (BraTS 2023, whole 3D volumes)
+
+A 3D U-Net trained on 1,183 BraTS 2023 glioma scans with all four MRI sequences (on a free Kaggle GPU, [`notebooks/train_3d_brats.ipynb`](notebooks/train_3d_brats.ipynb)). Tested through the app itself on **24 scans from 20 patients the model never saw**:
+
+| Tumor part | Dice (mean) |
+|---|---|
+| Whole tumor (incl. edema) | **0.88** (median 0.95) |
+| Tumor core | **0.89** |
+| Enhancing (active) tumor | **0.86** |
+| Tumor volume error | **6% median** |
+
+For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.90 / 0.80-0.88 on the official BraTS test sets, which differ from ours. It runs in about 30 s per scan on a laptop CPU. For these scans the 3D model, not the 2D classifier, decides whether a tumor is present: the 2D classifier was trained on slices with the skull visible and is unreliable on skull-stripped research volumes. The 3D model was trained on gliomas only, so it reports "brain tumor detected" with its sub-regions and does not claim a tumor type.
+
 ### Individual models
 
 | Model | Data (held-out set) | Result |
@@ -75,6 +88,7 @@ All numbers are on **held-out real scans the models never trained on**, split by
 | Breast lesion type, ResNet-18 | 117 BUSI images (validation split) | **85.5% accuracy** (normal 90%, benign 85%, malignant 84% recall) |
 | Breast lesion outline, U-Net | 117 BUSI images (validation split) | **Dice 0.61** |
 | Scan-type router | brain / breast / lung / other | 100% on validation and on the end-to-end sets above |
+| 3D brain tumor U-Net | 24 held-out BraTS 2023 scans (whole volumes) | **Dice 0.88 / 0.89 / 0.86** (whole tumor / core / enhancing) |
 
 <details>
 <summary>Figures: confusion matrix, Grad-CAM and outline examples</summary>
@@ -92,7 +106,7 @@ Brain tumor outlines (held-out Figshare patients) and breast lesion outlines (BU
 
 ### How to read these numbers honestly
 
-- **Brain outlines are missing on ~44% of tumors in the end-to-end test.** The outline model was trained on Figshare (contrast-enhanced T1), while the test set also has T2/FLAIR images and other sources. It misses many small pituitary tumors in particular. When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. Training on more diverse masks (e.g. BraTS) is the fix.
+- **2D brain outlines (single JPG/PNG images) are missing on ~44% of tumors in the end-to-end test.** The 2D outline model was trained on Figshare (contrast-enhanced T1), while the test set also has T2/FLAIR images and other sources. It misses many small pituitary tumors in particular. When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. With full 3D MRI (four sequences) the 3D model is used instead and is far more accurate (Dice 0.88).
 - **The classifier guides the outline.** When the classifier is confident a scan is normal (above 80%), no outline is reported and a note explains why. For brain, when it is confident a tumor is present, a lower threshold extends the outline the model already found. Both rules were checked against expert masks and only kept where they helped.
 - **Breast normals:** 20% still get a small outline. BUSI has only 133 normal images.
 - **Lung CT is not included yet.** A lung model was trained on 80 LIDC-IDRI cases but did no better than chance on held-out patients, so it was not shipped. Lung CTs are recognised and refused with a clear message (choosing the type manually runs a clearly labeled experimental detector). A proper lung model needs nodule-centred patches and 3D context.
@@ -109,7 +123,7 @@ Trained weights are already in `weights/`. To retrain or improve them, use the o
 |---|---|---|
 | Brain classifier | Brain Tumor MRI (Masoud Nickparvar, 7,200 images) | `python -m oncovision.training.train_classifier --profile brain_mri --train-dir data/brain/Training --test-dir data/brain/Testing --pretrained` |
 | Brain segmenter | Figshare (3,064 slices) + normal brains | `python scripts/prepare_figshare.py --download --out data/figshare --negatives data/brain/Training/notumor` then `python -m oncovision.training.train_segmenter --profile brain_mri --format maskfolder --data data/figshare/train/images --masks data/figshare/train/masks` |
-| Brain sub-regions (optional) | BraTS 2021 (1,251 cases, 4 sequences) | `python -m oncovision.training.train_segmenter --profile brain_mri --format brats --data .../BraTS2021_Training_Data` |
+| 3D brain tumor (sub-regions) | BraTS 2023 (1,251 scans, 4 sequences) | Kaggle notebook [`notebooks/train_3d_brats.ipynb`](notebooks/train_3d_brats.ipynb), or `python -m oncovision.training.train_segmenter3d --data .../BraTS2023 --prepared-dir /tmp/brats3d` (needs a GPU) |
 | Breast classifier + segmenter | BUSI (780 images) | `train_classifier --profile breast_us --train-dir data/busi --pretrained` and `train_segmenter --profile breast_us --format busi --data data/busi` |
 | Scan-type router | one folder per scan type | `python -m oncovision.training.train_classifier --router --train-dir data/router --pretrained` |
 
@@ -219,7 +233,6 @@ Models were trained on public datasets (licenses and citations in [docs/DATASETS
 ## Roadmap
 
 - Lung CT nodule model (patch-based, 3D)
-- BraTS-trained sub-region segmenter for multi-sequence MRI
 - Doctor correction loop: edit masks in the browser and save them for retraining
 - Logins with doctor and patient roles
 - More cancer types (prostate MRI, liver CT)

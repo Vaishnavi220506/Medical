@@ -229,7 +229,7 @@ function renderClassification(s) {
   $("#classification-card").innerHTML = `
     <h3>AI result</h3>
     <div class="big-label">${esc(c.display)}</div>
-    <span class="method">${c.method === "model" ? "trained classifier" : "heuristic (demo)"}</span>
+    <span class="method">${c.method !== "model" ? "heuristic (demo)" : s.segmentation.model === "3d" ? "3D model (all MRI types)" : "trained classifier"}</span>
     <div class="bars">${probs.map(([k, v], i) => `
       <div class="bar ${i === 0 ? "top" : ""}"><span>${esc(k.replace("_", " "))}</span>
         <div class="track"><div class="fill" style="width:${(v * 100).toFixed(1)}%"></div></div><span>${pct(v)}</span></div>`).join("")}
@@ -307,7 +307,9 @@ function updateSlice() {
   const url = (layer) => `/api/studies/${s.id}/slice/${state.slice}.png?layer=${layer}${seq}`;
   viewer.show(url("original"), state.layer === "original" ? null : url(state.layer), `${s.id}:${state.slice}`).catch(() => {});
   $("#slice-label").textContent = `${state.slice + 1} / ${s.scan.shape[0]}`;
-  $("#layer-help").textContent = LAYER_HELP[state.layer];
+  $("#layer-help").textContent = state.layer === "heatmap" && s.segmentation.model === "3d"
+    ? "Tumor probability from the 3D model: brighter = more likely tumor."
+    : LAYER_HELP[state.layer];
   $("#legend").style.display = state.layer === "overlay" ? "flex" : "none";
 }
 

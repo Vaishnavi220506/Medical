@@ -350,6 +350,37 @@ class Engine:
         uncertainty[(labels == 0) & (fg_prob <= 0.2)] = 0
         return Segmentation("model", labels.astype(np.uint8), uncertainty, fg_prob=fg_prob, fg_label=fg_label, model="3d")
 
+    def classify_from_3d(self, seg: Segmentation, profile: CancerProfile) -> tuple[Classification, np.ndarray]:
+        """Tumor presence from the 3D model, used instead of the 2D classifier for 3D multi-sequence scans.
+
+        The 2D classifier was trained on single slices with the skull visible and is unreliable on
+        skull-stripped 3D research volumes (it called a 133 cm3 glioma "no tumor"). The 3D model was
+        trained on exactly such scans (gliomas only), so it decides whether a tumor is present; it
+        does not claim a tumor type it was never trained to tell apart.
+        """
+        tumor = seg.labels > 0
+        volume_voxels = int(tumor.sum())
+        if volume_voxels >= MIN_TUMOR_PIXELS * 10:
+            p_tumor = float(seg.fg_prob[tumor].mean())
+            label, display = "tumor", "Brain tumor detected (3D model; sub-regions as in gliomas, tumor type not classified)"
+        else:
+            p_tumor = float(min(seg.fg_prob.max(), 0.5)) if seg.fg_prob is not None else 0.0
+            label, display = profile.normal_class, profile.class_descriptions[profile.normal_class]
+        probs = {"tumor": p_tumor, profile.normal_class: 1 - p_tumor}
+        p = np.array([p_tumor, 1 - p_tumor])
+        cls = Classification(
+            method="model",
+            label=label,
+            display=display,
+            probabilities=probs,
+            confidence=float(max(p)),
+            uncertainty=float(_entropy(p[None], axis=1)[0]),
+            mc_std=None,
+            slices_used=self.key_slices(None, seg) if tumor.any() else [],
+        )
+        # The tumor-probability map stands in for the Grad-CAM heatmap.
+        return cls, seg.fg_prob.astype(np.float32)
+
     def refine(self, seg: Segmentation, cls: Classification, profile: CancerProfile) -> Segmentation:
         """Use the classifier, the more reliable model, to guide the tumor outline.
 
@@ -363,7 +394,7 @@ class Engine:
         where gating cut false outlines on normal scans from 50% to 20%
         (breast) and 6% to 2% (brain) while losing at most 1 of 230 tumors.
         """
-        if seg.fg_prob is None or cls.method != "model" or profile.normal_class not in cls.probabilities:
+        if seg.fg_prob is None or seg.model == "3d" or cls.method != "model" or profile.normal_class not in cls.probabilities:
             return seg
         p_normal = cls.probabilities[profile.normal_class]
         if p_normal > GATE_NORMAL:

@@ -17,7 +17,12 @@ The training scripts read each dataset as it is laid out after download. Folder 
 - Convert it with `python scripts/prepare_figshare.py --download --out data/figshare`, which writes `train/` and `test/` (patient-disjoint) image and mask folders.
 - Cite: Cheng J. et al., "Enhanced Performance of Brain Tumor Classification via Tumor Region Augmentation and Partition", PLoS ONE 10(10), 2015.
 
-### Tumor sub-regions (optional): BraTS 2021
+### 3D tumor sub-regions: BraTS 2023 (used for the shipped 3D model)
+- Hugging Face mirror: https://huggingface.co/datasets/MedOtter/brats2023-gli-dataset (CC-BY-4.0, no login). 1,251 glioma scans with FLAIR, T1, T1ce, T2 and expert labels (1 necrotic core, 2 edema, 3 enhancing tumor). Some patients have several time points (`...-000`, `...-001`); all splits are by patient.
+- Used by `notebooks/train_3d_brats.ipynb` / `oncovision.training.train_segmenter3d`.
+- Cite: Baid U. et al., arXiv:2107.02314 (2021); Menze B. H. et al., IEEE TMI 34(10), 2015; Bakas S. et al., Scientific Data 4, 170117 (2017).
+
+### Tumor sub-regions (older): BraTS 2021
 - Official: https://www.synapse.org/brats (registration required). Kaggle mirror: https://www.kaggle.com/datasets/dschettler8845/brats-2021-task1
 - 1,251 glioma cases, each with 4 co-registered sequences (FLAIR, T1, T1ce, T2) and expert labels: 1 necrotic core, 2 edema, 4 enhancing tumor. OncoVision maps 4 to 3.
 - Layout: `BraTS2021_Training_Data/BraTS2021_00000/BraTS2021_00000_{flair,t1,t1ce,t2,seg}.nii.gz`. BraTS 2023 names (`-t1n`, `-t1c`, `-t2w`, `-t2f`) also work.
