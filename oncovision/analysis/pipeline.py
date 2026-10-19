@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import logging
+import time
+
 import threading
 from datetime import date
 
@@ -79,6 +82,9 @@ def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_unc
     return reasons
 
 
+log = logging.getLogger("oncovision.analyze")
+
+
 def analyze(
     files: list[tuple[str, bytes, str | None]],
     scan_type: str = "auto",
@@ -86,8 +92,12 @@ def analyze(
     scan_date: str | None = None,
     pixel_spacing_mm: float | None = None,
 ) -> dict:
+    t0 = time.time()
+    log.info("Analyzing %d file(s): %s", len(files), ", ".join(f[0] for f in files)[:200])
     engine, store = get_engine(), get_store()
+    log.info("Models ready on %s (%.1fs)", engine.device, time.time() - t0)
     scan: Scan = load_scan(files)
+    log.info("Scan loaded: %s, shape %s", scan.source_format, scan.shape)
 
     if pixel_spacing_mm:
         dz = scan.spacing[0] if scan.spacing else pixel_spacing_mm
@@ -110,6 +120,7 @@ def analyze(
             "Pick the scan type manually to analyze anyway."
         )
     profile = get_profile(route.profile)
+    log.info("Scan type: %s (%s, %.0f%%)", profile.key, route.method, route.confidence * 100)
     if engine.needs_volume(profile.key) and not scan.is_volume:
         raise UnsupportedScanError(
             f"{profile.display_name} analysis needs the whole CT scan (a DICOM series, a zipped DICOM folder or a "
@@ -124,12 +135,14 @@ def analyze(
             scan.spacing_estimated = True
 
     seg = engine.segment(scan, profile)
+    log.info("Outline done (%s model, %.1fs)", seg.model or seg.method, time.time() - t0)
     if seg.model == "3d" or (profile.key not in engine.classifiers and seg.method == "model"):
         # No separate classifier: the outline model itself decides whether a lesion is present.
         cls, heat = engine.classify_from_3d(seg, profile)
     else:
         cls, heat = engine.classify(scan, profile, seg)
         seg = engine.refine(seg, cls, profile)
+    log.info("Classification: %s (%.1fs)", cls.label, time.time() - t0)
     reference = scan.primary(profile.classifier_channel_preference)
     measurements = measure(
         seg.labels, reference, profile, scan.spacing, axial_volume=scan.source_format in ("nifti", "dicom")
@@ -186,4 +199,5 @@ def analyze(
     summary = plain(summary)
     channels = {name: normalize(arr) for name, arr in scan.channels.items()}
     store.save_study(summary, channels, seg.labels, heat.astype(np.float32), seg.uncertainty)
+    log.info("Done in %.1fs", time.time() - t0)
     return summary
