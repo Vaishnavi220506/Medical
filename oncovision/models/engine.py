@@ -379,12 +379,14 @@ class Engine:
         else:
             labels = to_label[probs.argmax(0)]
         comp, n = ndimage.label(labels > 0)
-        if n and meta.get("min_component_mm3"):
+        # "min_component_voxels" is the name used by the first lung checkpoints (1 mm grid, so equal).
+        min_mm3 = meta.get("min_component_mm3", meta.get("min_component_voxels"))
+        if n and min_mm3:
             # Lung nodules and breast tumors: several real lesions of very different sizes can
             # coexist, so keep every finding above the minimum size (inside the lungs for CT).
             voxel_mm3 = float(np.prod(scan.spacing)) if scan.spacing else 1.0
             sizes = np.asarray(ndimage.sum(labels > 0, comp, range(1, n + 1))) * voxel_mm3
-            drop = sizes < meta["min_component_mm3"]
+            drop = sizes < min_mm3
             if meta.get("crop") == "lungs":
                 lungs = ndimage.binary_dilation(lung_mask(channel_stack(scan, ("image",))[0]), iterations=3)
                 drop |= np.asarray(ndimage.maximum(lungs, comp, range(1, n + 1))) == 0
