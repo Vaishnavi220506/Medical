@@ -169,7 +169,7 @@ def analyze(
             "mc_std": cls.mc_std,
             "slices_used": cls.slices_used,
         },
-        "segmentation": {"method": seg.method, "mean_uncertainty_in_tumor": lesion_unc, "threshold": seg.threshold, "note": seg.note},
+        "segmentation": {"method": seg.method, "mean_uncertainty_in_tumor": lesion_unc, "threshold": seg.threshold, "note": seg.note, "model": seg.model},
         "measurements": measurements,
         "review": {"required": bool(reasons), "reasons": reasons},
         "disclaimer": DISCLAIMER,

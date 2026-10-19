@@ -26,7 +26,7 @@ from scipy import ndimage
 from ..imaging.io import Scan
 from ..imaging.preprocess import foreground_mask, normalize, resize2d
 from . import heuristic
-from .networks import Classifier, UNet, enable_mc_dropout, grad_cam
+from .networks import Classifier, UNet, UNet3D, enable_mc_dropout, grad_cam, sliding_window_3d
 from .registry import PROFILES, ROUTER_CLASSES, CancerProfile
 
 log = logging.getLogger(__name__)
@@ -68,6 +68,7 @@ class Segmentation:
     fg_label: np.ndarray | None = None  # (Z, H, W) most likely tumor label if the pixel were tumor
     threshold: float = 0.5
     note: str = ""
+    model: str = ""  # which trained segmenter produced it (single-image / multi-sequence / 3d)
 
 
 def _pick_device(pref: str) -> torch.device:
@@ -101,6 +102,8 @@ class Engine:
         self.router: tuple[Classifier, dict] | None = None
         self.classifiers: dict[str, tuple[Classifier, dict]] = {}
         self.segmenters: dict[str, tuple[UNet, dict]] = {}
+        self.multiseq_segmenters: dict[str, tuple[UNet, dict]] = {}
+        self.segmenters3d: dict[str, tuple[UNet3D, dict]] = {}
         self.reload()
 
     # ------------------------------------------------------------------ loading
@@ -124,7 +127,7 @@ class Engine:
             self.weights_dir / "router.pt",
             lambda m: Classifier(num_classes=len(m.get("classes", ROUTER_CLASSES))),
         )
-        self.classifiers, self.segmenters = {}, {}
+        self.classifiers, self.segmenters, self.multiseq_segmenters, self.segmenters3d = {}, {}, {}, {}
         for key, profile in PROFILES.items():
             clf = self._load(
                 self.weights_dir / key / "classifier.pt",
@@ -142,6 +145,37 @@ class Engine:
             )
             if seg:
                 self.segmenters[key] = seg
+            # Optional second segmenter for multi-sequence MRI (BraTS: FLAIR, T1, T1ce, T2),
+            # which separates tumor sub-regions. Used when the upload has 2+ of its sequences.
+            multi = self._load(
+                self.weights_dir / key / "segmenter_multiseq.pt",
+                lambda m, p=profile: UNet(
+                    in_channels=len(m.get("channels", p.seg_channels)),
+                    num_classes=m.get("num_classes", p.num_seg_classes),
+                    base=m.get("base", 32),
+                ),
+            )
+            if multi:
+                self.multiseq_segmenters[key] = multi
+            # Optional true 3D model (3D U-Net on BraTS) for multi-sequence volumes.
+            seg3d = self._load(
+                self.weights_dir / key / "segmenter3d.pt",
+                lambda m, p=profile: UNet3D(len(m["channels"]), m["num_classes"], base=m.get("base", 16)),
+            )
+            if seg3d:
+                self.segmenters3d[key] = seg3d
+
+    def _segmenter_for(self, scan: Scan, profile: CancerProfile):
+        """Most specific model first: 3D for multi-sequence volumes, then multi-sequence 2D, then single-image."""
+        seg3d = self.segmenters3d.get(profile.key)
+        if seg3d and scan.is_volume and sum(c in scan.channels for c in seg3d[1]["channels"]) >= 2:
+            return seg3d, "3d"
+        multi = self.multiseq_segmenters.get(profile.key)
+        if multi and sum(c in scan.channels for c in multi[1].get("channels", ())) >= 2:
+            return multi, "multi-sequence"
+        if profile.key in self.segmenters:
+            return self.segmenters[profile.key], "single-image"
+        return (multi, "multi-sequence") if multi else (None, "")
 
     def status(self) -> dict:
         out = {"device": str(self.device), "router": self.router is not None, "profiles": {}}
@@ -152,15 +186,21 @@ class Engine:
                 "segmenter": seg is not None,
                 "classifier_metrics": clf[1].get("metrics", {}) if clf else {},
                 "segmenter_metrics": seg[1].get("metrics", {}) if seg else {},
+                "segmenter3d": key in self.segmenters3d,
+                "segmenter3d_metrics": self.segmenters3d[key][1].get("metrics", {}) if key in self.segmenters3d else {},
+                "multiseq_segmenter": key in self.multiseq_segmenters,
+                "multiseq_segmenter_metrics": self.multiseq_segmenters[key][1].get("metrics", {})
+                if key in self.multiseq_segmenters
+                else {},
             }
         return out
 
     def has_models(self, profile_key: str) -> bool:
-        return profile_key in self.classifiers or profile_key in self.segmenters
+        return any(profile_key in d for d in (self.classifiers, self.segmenters, self.multiseq_segmenters, self.segmenters3d))
 
     @property
     def demo_mode(self) -> bool:
-        return not self.classifiers and not self.segmenters
+        return not (self.classifiers or self.segmenters or self.multiseq_segmenters or self.segmenters3d)
 
     # ------------------------------------------------------------------ routing
     def route(self, scan: Scan) -> RouteResult:
@@ -218,13 +258,16 @@ class Engine:
 
     # ------------------------------------------------------------------ segmentation
     def segment(self, scan: Scan, profile: CancerProfile) -> Segmentation:
-        if profile.key not in self.segmenters:
+        chosen, model_name = self._segmenter_for(scan, profile)
+        if chosen is None:
             labels, uncertainty, saliency = heuristic.segment(
                 scan.primary(profile.classifier_channel_preference), profile, flair=scan.channels.get("flair")
             )
             return Segmentation("heuristic", labels, uncertainty, saliency)
 
-        model, meta = self.segmenters[profile.key]
+        if model_name == "3d":
+            return self._segment3d(scan, profile, *chosen)
+        model, meta = chosen
         channels = tuple(meta.get("channels", profile.seg_channels))
         size = meta.get("image_size", profile.seg_size)
         # Model output class i -> label value (binary whole-tumor models map 1 -> the "tumor" label).
@@ -268,7 +311,34 @@ class Engine:
             probs = run(idx, self.mc_samples)
             store(idx, probs)
             uncertainty[idx] = _entropy(probs, axis=1)
-        return Segmentation("model", labels, uncertainty, fg_prob=fg_prob, fg_label=fg_label)
+        return Segmentation("model", labels, uncertainty, fg_prob=fg_prob, fg_label=fg_label, model=model_name)
+
+    def _segment3d(self, scan: Scan, profile: CancerProfile, model, meta) -> Segmentation:
+        """Whole-volume 3D U-Net with sliding windows, on a 1 mm grid like BraTS."""
+        x = channel_stack(scan, tuple(meta["channels"]))  # (C, Z, H, W)
+        shape = x.shape[1:]
+        target = meta.get("spacing_mm", 1.0)
+        factors = [s / target for s in scan.spacing] if scan.spacing else [1.0, 1.0, 1.0]
+        if any(abs(f - 1) > 0.1 for f in factors):
+            x = np.stack([ndimage.zoom(c, factors, order=1) for c in x])
+        t = torch.from_numpy(x).float().to(self.device)
+        probs = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
+        probs = probs.cpu().numpy()
+        if probs.shape[1:] != shape:
+            probs = np.stack([ndimage.zoom(p, [a / b for a, b in zip(shape, p.shape)], order=1) for p in probs])[:, : shape[0], : shape[1], : shape[2]]
+        probs = probs / np.clip(probs.sum(0, keepdims=True), 1e-6, None)
+        to_label = np.array(meta.get("label_indices", range(probs.shape[0])), dtype=np.uint8)
+        labels = to_label[probs.argmax(0)]
+        fg_prob = (1.0 - probs[0]).astype(np.float32)
+        fg_label = to_label[1 + probs[1:].argmax(0)]
+        # Drop isolated speckles: components under 10% of the largest tumor component.
+        comp, n = ndimage.label(labels > 0)
+        if n > 1:
+            sizes = ndimage.sum(labels > 0, comp, range(1, n + 1))
+            labels[np.isin(comp, np.where(sizes < 0.1 * sizes.max())[0] + 1)] = 0
+        uncertainty = _entropy(probs, axis=0).astype(np.float32)
+        uncertainty[(labels == 0) & (fg_prob <= 0.2)] = 0
+        return Segmentation("model", labels.astype(np.uint8), uncertainty, fg_prob=fg_prob, fg_label=fg_label, model="3d")
 
     def refine(self, seg: Segmentation, cls: Classification, profile: CancerProfile) -> Segmentation:
         """Use the classifier, the more reliable model, to guide the tumor outline.
@@ -293,7 +363,7 @@ class Engine:
                 f"The outline model marked a small region, but the classifier is {p_normal:.0%} confident this scan is "
                 "normal, so it is not reported as a tumor. Look at the AI heatmap if you want to check it."
             )
-            return Segmentation(seg.method, np.zeros_like(seg.labels), seg.uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, 1.0, note)
+            return Segmentation(seg.method, np.zeros_like(seg.labels), seg.uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, 1.0, note, seg.model)
         if p_normal >= 0.2 or profile.guided_low_threshold is None:
             return seg
         low = seg.fg_prob > profile.guided_low_threshold
@@ -317,7 +387,7 @@ class Engine:
         binary = (-(p * np.log(p) + (1 - p) * np.log(1 - p)) / math.log(2)).astype(np.float32)
         uncertainty = np.where(mask & (seg.uncertainty == 0), binary, seg.uncertainty).astype(np.float32)
         note = "Outline threshold lowered because the classifier is confident a tumor is present; check the boundary."
-        return Segmentation(seg.method, labels, uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, profile.guided_low_threshold, note)
+        return Segmentation(seg.method, labels, uncertainty, seg.saliency, seg.fg_prob, seg.fg_label, profile.guided_low_threshold, note, seg.model)
 
     # ------------------------------------------------------------------ classification
     def key_slices(self, scan: Scan, seg: Segmentation, limit: int = 5) -> list[int]:

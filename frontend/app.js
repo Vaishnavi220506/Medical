@@ -55,7 +55,7 @@ async function loadStatus() {
 // ------------------------------------------------------------------ upload
 function guessSequence(name) {
   const tokens = name.toLowerCase().split(/[^a-z0-9]+/);
-  for (const [seq, aliases] of [["t1ce", ["t1ce", "t1c", "t1gd", "t1post"]], ["flair", ["flair"]], ["t2", ["t2"]], ["t1", ["t1"]]]) {
+  for (const [seq, aliases] of [["t1ce", ["t1ce", "t1c", "t1gd", "t1post"]], ["flair", ["flair", "t2f"]], ["t2", ["t2", "t2w"]], ["t1", ["t1", "t1n"]]]) {
     if (aliases.some((a) => tokens.includes(a))) return seq;
   }
   return "";
@@ -242,6 +242,8 @@ function renderScanInfo(s) {
     ["Sequences", sc.sequences.join(", ")],
     ["Scan type detection", `${s.route.method} (${pct(s.route.confidence)}): ${s.route.reason}`],
   ];
+  const outlineModels = { "3d": "3D U-Net (whole volume, all MRI types)", "multi-sequence": "2D U-Net on all MRI types (BraTS)", "single-image": "2D U-Net (single image)" };
+  if (s.segmentation.model) rows.push(["Outline model", outlineModels[s.segmentation.model] || s.segmentation.model]);
   if (sc.spacing_mm) rows.push(["Voxel size (mm)", sc.spacing_mm.map((v) => v.toFixed(2)).join(" × ") + (sc.spacing_estimated ? " (estimated)" : "")]);
   if (sc.removed_phi?.length) rows.push(["Privacy", `Removed ${sc.removed_phi.length} identifying DICOM field(s)`]);
   $("#scan-card").innerHTML = `<h3>Scan</h3><table>${rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>`;

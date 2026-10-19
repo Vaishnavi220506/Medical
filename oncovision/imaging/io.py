@@ -35,9 +35,9 @@ PHI_TAGS = (
 
 SEQUENCE_ALIASES = {
     "t1ce": ("t1ce", "t1c", "t1gd", "t1_gd", "t1post", "t1-post", "contrast"),
-    "flair": ("flair",),
-    "t2": ("t2",),
-    "t1": ("t1",),
+    "flair": ("flair", "t2f"),  # t2f / t1n / t2w are the BraTS 2023 names
+    "t2": ("t2", "t2w"),
+    "t1": ("t1", "t1n"),
 }
 
 

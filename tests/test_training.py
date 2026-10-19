@@ -139,3 +139,34 @@ def test_untrained_scan_type_is_rejected_unless_chosen(isolated, demo_dir, tmp_p
     with pytest.raises(UnsupportedScanError, match="no trained model"):
         analyze(us, "auto", "Case-R")
     assert analyze(us, "breast_us", "Case-R")["mode"] == "demo"
+
+
+def test_3d_segmenter_training_and_inference(isolated, demo, tmp_path, monkeypatch):
+    """The 3D U-Net trains on BraTS-2023-style folders and is used for multi-sequence volumes."""
+    from oncovision.training import train_segmenter3d
+
+    rng = np.random.default_rng(3)
+    root = tmp_path / "brats23"
+    names = {"flair": "t2f", "t1": "t1n", "t1ce": "t1c", "t2": "t2w"}
+    for c in range(3):
+        case = root / f"BraTS-GLI-0000{c}-000"
+        case.mkdir(parents=True)
+        vols = demo.phantom(9.0 + c, rng)
+        for seq, vol in vols.items():
+            nib.save(nib.Nifti1Image(vol, np.eye(4)), str(case / f"{case.name}-{names[seq]}.nii.gz"))
+        seg = np.zeros(vol.shape, dtype=np.uint8)
+        seg[vols["flair"] > 750] = 2
+        seg[vols["t1ce"] > 850] = 3
+        nib.save(nib.Nifti1Image(seg, np.eye(4)), str(case / f"{case.name}-seg.nii.gz"))
+    out = isolated.weights_dir / "brain_mri" / "segmenter3d.pt"
+    _run(train_segmenter3d, ["--data", str(root), "--prepared-dir", str(tmp_path / "prep3d"), "--epochs", "1", "--samples-per-epoch", "2", "--patch", "32", "--batch-size", "1", "--base", "4", "--val-cases", "1", "--workers", "0", "--out", str(out)], monkeypatch)
+    import torch
+
+    meta = torch.load(out, weights_only=True)["meta"]
+    assert meta["architecture"] == "unet3d" and "whole_tumor" in meta["metrics"]["validation"]
+
+    files = [(f"x_{s}.nii.gz", nib.Nifti1Image(v, np.eye(4)).to_bytes(), s) for s, v in demo.phantom(10.0, rng).items()]
+    study = analyze(files, "brain_mri", "Case-3D")
+    assert study["segmentation"]["model"] == "3d"
+    single = analyze([("x_t1ce.nii.gz", files[2][1], "t1ce")], "brain_mri", "Case-3D")
+    assert single["segmentation"]["model"] != "3d"  # needs 2+ sequences

@@ -138,13 +138,16 @@ def _brats_file(case: Path, key: str) -> Path | None:
     return None
 
 
-def prepare_brats(root: Path, out: Path, size: int = 192, background_fraction: float = 0.25, seed: int = 42) -> int:
+def prepare_brats(
+    root: Path, out: Path, size: int = 192, background_fraction: float = 0.25, seed: int = 42, slice_step: int = 1
+) -> int:
     """Convert BraTS cases into 2D slice files ``out/<case>_<z>.npz``.
 
     Keeps every slice containing tumor plus a random share of tumor-free brain
     slices. Labels are remapped to OncoVision's: 1 necrotic core, 2 edema,
     3 enhancing tumor (BraTS 2021 uses 4 for enhancing; BraTS 2023 uses 3).
-    BraTS 2023 file names (t1n, t1c, t2w, t2f) are also accepted.
+    BraTS 2023 file names (t1n, t1c, t2w, t2f) are also accepted. ``slice_step``
+    keeps every n-th slice (neighbouring slices are nearly identical).
     """
     rng = random.Random(seed)
     out = Path(out)
@@ -162,7 +165,7 @@ def prepare_brats(root: Path, out: Path, size: int = 192, background_fraction: f
         vols = np.stack([normalize(load_nifti(paths[s].read_bytes()).channels["image"]) for s in BRATS_SEQUENCES])
         seg = load_nifti(_brats_file(case, "seg").read_bytes()).channels["image"].round().astype(np.uint8)
         seg[seg == 4] = 3
-        for z in range(seg.shape[0]):
+        for z in range(0, seg.shape[0], slice_step):
             has_tumor = seg[z].any()
             has_brain = vols[:, z].max() > 0.05
             if not has_brain or (not has_tumor and rng.random() > background_fraction):
@@ -201,12 +204,17 @@ def split_by_key(items: list, key, val_fraction: float, seed: int = 42) -> tuple
     return [it for it in items if key(it) not in val_groups], [it for it in items if key(it) in val_groups]
 
 
+def patient_id(case: str) -> str:
+    """BraTS 2023 case names end with a time point (BraTS-GLI-00008-001); group them by patient."""
+    return re.sub(r"-\d{3}$", "", case)
+
+
 def split_by_case(files: list[Path], val_fraction: float, seed: int = 42) -> tuple[list[Path], list[Path]]:
     """Split slice files so no patient appears in both train and validation."""
-    cases = sorted({f.stem.rsplit("_", 1)[0] for f in files})
+    cases = sorted({patient_id(f.stem.rsplit("_", 1)[0]) for f in files})
     random.Random(seed).shuffle(cases)
     n_val = min(len(cases) - 1, max(1, int(len(cases) * val_fraction)))  # always keep a training case
     val_cases = set(cases[:n_val])
-    train = [f for f in files if f.stem.rsplit("_", 1)[0] not in val_cases]
-    val = [f for f in files if f.stem.rsplit("_", 1)[0] in val_cases]
+    train = [f for f in files if patient_id(f.stem.rsplit("_", 1)[0]) not in val_cases]
+    val = [f for f in files if patient_id(f.stem.rsplit("_", 1)[0]) in val_cases]
     return train, val

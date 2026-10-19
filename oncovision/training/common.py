@@ -104,8 +104,8 @@ def dice_loss(logits: torch.Tensor, target: torch.Tensor, eps: float = 1.0) -> t
     """Soft Dice over foreground classes."""
     k = logits.shape[1]
     probs = torch.softmax(logits, dim=1)
-    onehot = F.one_hot(target, k).permute(0, 3, 1, 2).float()
-    dims = (0, 2, 3)
+    onehot = F.one_hot(target, k).movedim(-1, 1).float()  # works for 2D and 3D
+    dims = (0, *range(2, logits.ndim))
     inter = (probs * onehot).sum(dims)
     union = probs.sum(dims) + onehot.sum(dims)
     dice = (2 * inter + eps) / (union + eps)

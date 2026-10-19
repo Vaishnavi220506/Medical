@@ -89,19 +89,22 @@ def main() -> None:
     parser.add_argument("--workers", type=int, default=2)
     parser.add_argument("--max-items", type=int)
     parser.add_argument("--init", type=Path, help="Start from an existing checkpoint (fine-tuning)")
+    parser.add_argument("--size", type=int, help="Training image size (default: the scan type's seg_size)")
+    parser.add_argument("--slice-step", type=int, default=1, help="BraTS: keep every n-th slice when preparing")
     args = parser.parse_args()
 
     seed_everything()
     device = pick_device()
     profile = get_profile(args.profile)
-    size = profile.seg_size
-    out = args.out or settings.weights_dir / profile.key / "segmenter.pt"
+    size = args.size or profile.seg_size
+    default_name = "segmenter_multiseq.pt" if args.format == "brats" else "segmenter.pt"
+    out = args.out or settings.weights_dir / profile.key / default_name
 
     if args.format == "brats":
         prepared = args.prepared_dir or args.data.parent / f"{args.data.name}_slices"
         if not prepared.exists() or not any(prepared.glob("*.npz")):
             print(f"Preparing BraTS slices into {prepared} (one-time)...")
-            prepare_brats(args.data, prepared, size)
+            prepare_brats(args.data, prepared, size, slice_step=args.slice_step)
         files = sorted(prepared.glob("*.npz"))
         if args.max_items:
             files = files[: args.max_items]

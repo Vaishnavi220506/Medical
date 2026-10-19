@@ -125,3 +125,89 @@ def grad_cam(model: Classifier, x: torch.Tensor, target: int) -> torch.Tensor:
     cam = F.interpolate(cam, size=x.shape[-2:], mode="bilinear", align_corners=False)[0, 0]
     cam = cam - cam.min()
     return cam / cam.max() if cam.max() > 0 else cam
+
+
+class ConvBlock3d(nn.Module):
+    def __init__(self, in_ch: int, out_ch: int, dropout: float = 0.0):
+        super().__init__()
+        self.block = nn.Sequential(
+            nn.Conv3d(in_ch, out_ch, 3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_ch, affine=True),
+            nn.LeakyReLU(0.01, inplace=True),
+            nn.Conv3d(out_ch, out_ch, 3, padding=1, bias=False),
+            nn.InstanceNorm3d(out_ch, affine=True),
+            nn.LeakyReLU(0.01, inplace=True),
+            nn.Dropout3d(dropout) if dropout > 0 else nn.Identity(),
+        )
+
+    def forward(self, x):
+        return self.block(x)
+
+
+class UNet3D(nn.Module):
+    """3D U-Net (nnU-Net style: instance norm, leaky ReLU) for whole-volume segmentation.
+
+    Input sizes must be divisible by 16 (four poolings); use patches of 96 or 128.
+    """
+
+    def __init__(self, in_channels: int, num_classes: int, base: int = 16, dropout: float = 0.1):
+        super().__init__()
+        chs = [base, base * 2, base * 4, base * 8]
+        self.encoders = nn.ModuleList()
+        prev = in_channels
+        for ch in chs:
+            self.encoders.append(ConvBlock3d(prev, ch))
+            prev = ch
+        self.bottleneck = ConvBlock3d(chs[-1], chs[-1] * 2, dropout=dropout)
+        self.ups = nn.ModuleList()
+        self.decoders = nn.ModuleList()
+        prev = chs[-1] * 2
+        for ch in reversed(chs):
+            self.ups.append(nn.ConvTranspose3d(prev, ch, 2, stride=2))
+            self.decoders.append(ConvBlock3d(ch * 2, ch))
+            prev = ch
+        self.head = nn.Conv3d(chs[0], num_classes, 1)
+
+    def forward(self, x):
+        skips = []
+        for enc in self.encoders:
+            x = enc(x)
+            skips.append(x)
+            x = F.max_pool3d(x, 2)
+        x = self.bottleneck(x)
+        for up, dec, skip in zip(self.ups, self.decoders, reversed(skips)):
+            x = dec(torch.cat([up(x), skip], dim=1))
+        return self.head(x)
+
+
+def sliding_window_3d(model: nn.Module, volume: torch.Tensor, patch: int = 128, overlap: float = 0.5, flip_tta: bool = True) -> torch.Tensor:
+    """Softmax probabilities for a (C, Z, Y, X) volume using overlapping patches.
+
+    Patches are blended with a Gaussian weight so seams don't show; with
+    ``flip_tta`` each patch is also predicted left-right mirrored and averaged.
+    """
+    c, *shape = volume.shape
+    pad = [max(0, patch - s) for s in shape]
+    vol = F.pad(volume, (0, pad[2], 0, pad[1], 0, pad[0]))
+    shape_p = vol.shape[1:]
+    step = max(1, int(patch * (1 - overlap)))
+    starts = [sorted({*range(0, max(s - patch, 0) + 1, step), max(s - patch, 0)}) for s in shape_p]
+    g = torch.exp(-((torch.arange(patch, dtype=torch.float32) - (patch - 1) / 2) ** 2) / (2 * (patch / 8) ** 2))
+    weight = (g[:, None, None] * g[None, :, None] * g[None, None, :]).to(volume.device).clamp_min(1e-3)
+    probs = None
+    norm = torch.zeros(shape_p, device=volume.device)
+    model.eval()
+    with torch.no_grad():
+        for z in starts[0]:
+            for y in starts[1]:
+                for x in starts[2]:
+                    tile = vol[None, :, z : z + patch, y : y + patch, x : x + patch]
+                    p = torch.softmax(model(tile), dim=1)
+                    if flip_tta:
+                        p = (p + torch.softmax(model(tile.flip(-1)), dim=1).flip(-1)) / 2
+                    if probs is None:
+                        probs = torch.zeros((p.shape[1], *shape_p), device=volume.device)
+                    probs[:, z : z + patch, y : y + patch, x : x + patch] += p[0] * weight
+                    norm[z : z + patch, y : y + patch, x : x + patch] += weight
+    probs = probs / norm.clamp_min(1e-6)
+    return probs[:, : shape[0], : shape[1], : shape[2]]
