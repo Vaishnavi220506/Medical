@@ -206,8 +206,9 @@ function sizeText(m) {
 
 function renderMeasurements(s) {
   const m = s.measurements;
+  const note = s.segmentation.note ? `<p class="hint">${esc(s.segmentation.note)}</p>` : "";
   if (!m.detected) {
-    $("#measurements-card").innerHTML = `<h3>Measurements</h3><p class="muted">No tumor region was segmented.</p>`;
+    $("#measurements-card").innerHTML = `<h3>Measurements</h3><p class="muted">No tumor region was outlined.</p>${note}`;
     return;
   }
   const u = m.units;
@@ -230,7 +231,7 @@ function renderMeasurements(s) {
   $("#measurements-card").innerHTML = `<h3>Measurements</h3>
     <table>${rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>
     ${s.scan.spacing_estimated ? `<p class="hint">Pixel size was estimated from typical head size, so sizes are approximate. Enter the real pixel spacing under Advanced for exact values.</p>` : ""}
-    ${u === "px" ? `<p class="hint">Pixel size unknown, so sizes are in pixels. Enter the pixel spacing under Advanced.</p>` : ""}`;
+    ${u === "px" ? `<p class="hint">Pixel size unknown, so sizes are in pixels. Enter the pixel spacing under Advanced.</p>` : ""}${note}`;
 }
 
 function renderScanInfo(s) {

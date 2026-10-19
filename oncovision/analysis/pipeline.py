@@ -71,7 +71,11 @@ def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_unc
     if detected and says_normal and cls.method == "model":
         reasons.append("Models disagree: a region was segmented but the classifier predicts no tumor.")
     if not detected and not says_normal and cls.method == "model":
-        reasons.append("Models disagree: the classifier predicts a tumor but no region was segmented.")
+        reasons.append(
+            f"The classifier found {cls.label.replace('_', ' ')}, but the outline model could not delineate it on this image "
+            "(it was trained mostly on contrast-enhanced T1 slices), so there are no size measurements. The AI heatmap "
+            "shows the approximate location."
+        )
     return reasons
 
 
@@ -94,6 +98,11 @@ def analyze(
         route = RouteResult(get_profile(scan_type).key, 1.0, "user", reason="Selected by the user.")
     else:
         route = engine.route(scan)
+    if route.profile and route.method != "user" and not engine.demo_mode and not engine.has_models(route.profile):
+        raise UnsupportedScanError(
+            f"This looks like a {get_profile(route.profile).display_name} scan, but OncoVision has no trained model for it "
+            "yet, so it cannot give a reliable result. Choose the scan type manually to run the experimental demo detector."
+        )
     if route.profile is None:
         raise UnsupportedScanError(
             "This scan does not look like one of the supported types "
@@ -110,6 +119,7 @@ def analyze(
 
     seg = engine.segment(scan, profile)
     cls, heat = engine.classify(scan, profile, seg)
+    seg = engine.refine(seg, cls, profile)
     reference = scan.primary(profile.classifier_channel_preference)
     measurements = measure(
         seg.labels, reference, profile, scan.spacing, axial_volume=scan.source_format in ("nifti", "dicom")
@@ -158,7 +168,7 @@ def analyze(
             "mc_std": cls.mc_std,
             "slices_used": cls.slices_used,
         },
-        "segmentation": {"method": seg.method, "mean_uncertainty_in_tumor": lesion_unc},
+        "segmentation": {"method": seg.method, "mean_uncertainty_in_tumor": lesion_unc, "threshold": seg.threshold, "note": seg.note},
         "measurements": measurements,
         "review": {"required": bool(reasons), "reasons": reasons},
         "disclaimer": DISCLAIMER,

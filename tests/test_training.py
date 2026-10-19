@@ -120,3 +120,22 @@ def get_store_labels(study):
     from oncovision.analysis.pipeline import get_store
 
     return get_store().arrays(study["id"])["labels"]
+
+
+def test_untrained_scan_type_is_rejected_unless_chosen(isolated, demo_dir, tmp_path, monkeypatch):
+    """Once real models exist, auto-detected scan types without a model are refused instead of guessed."""
+    import pytest
+
+    from oncovision.analysis.pipeline import UnsupportedScanError
+
+    rng = np.random.default_rng(0)
+    root = tmp_path / "Training"
+    for folder in ("glioma", "meningioma", "notumor", "pituitary"):
+        (root / folder).mkdir(parents=True)
+        for i in range(2):
+            Image.fromarray(rng.integers(0, 255, (64, 64), dtype=np.uint8)).save(root / folder / f"{i}.jpg")
+    _run(train_classifier, ["--profile", "brain_mri", "--train-dir", str(root), "--epochs", "1", "--batch-size", "4", "--workers", "0", "--val-fraction", "0.25", "--out", str(isolated.weights_dir / "brain_mri" / "classifier.pt")], monkeypatch)
+    us = [("us.png", (demo_dir / "breast_us.png").read_bytes(), None)]
+    with pytest.raises(UnsupportedScanError, match="no trained model"):
+        analyze(us, "auto", "Case-R")
+    assert analyze(us, "breast_us", "Case-R")["mode"] == "demo"
