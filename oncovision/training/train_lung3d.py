@@ -258,6 +258,8 @@ def main() -> None:
         "crop": "lungs",
         "min_component_voxels": MIN_NODULE_VOXELS,
         "data": "LIDC-IDRI (totalol/lungct NIfTI conversion)",
+        "val_cases": sorted(f.stem for f in val),
+        "test_cases": sorted(f.stem for f in test),
     }
     best = -1.0
     for epoch in range(args.epochs):
