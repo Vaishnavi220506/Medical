@@ -69,10 +69,10 @@
     const $ = (s) => document.querySelector(s);
     const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 
-    const [data, hover] = await Promise.all([fetch("data/mesh.json").then((r) => r.json()), fetch("data/hover.json").then((r) => r.json())]);
+    const [data, hover] = await Promise.all([fetch("assets/mesh.json").then((r) => r.json()), fetch("assets/hover.json").then((r) => r.json())]);
     const index = Uint8Array.from(atob(hover.index), (c) => c.charCodeAt(0));
     const dist = Uint8Array.from(atob(hover.distance), (c) => c.charCodeAt(0));
-    const viewer = await renderMeshes($("#three-container"), data, { sliceUrl: (i) => `data/slices/${i}.png` });
+    const viewer = await renderMeshes($("#three-container"), data, { sliceUrl: (i) => `assets/slices/${i}.png` });
     $("#three-msg").textContent = "";
 
     // Legend chips toggle the parts.

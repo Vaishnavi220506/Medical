@@ -8,7 +8,7 @@ server, so it can be hosted on GitHub Pages. It needs:
 * hover.json       explanations precomputed on a coarse grid (the app asks the server instead)
 
 Usage:
-    ONCOVISION_DATA_DIR=<data dir with the study> python scripts/make_web_demo.py --study <id> --out docs/demo/data
+    ONCOVISION_DATA_DIR=<data dir with the study> python scripts/make_web_demo.py --study <id> --out docs/demo/assets
 """
 
 from __future__ import annotations
@@ -33,7 +33,7 @@ GRID_MM = 4.0  # hover lookup resolution
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--study", required=True)
-    parser.add_argument("--out", type=Path, default=Path("docs/demo/data"))
+    parser.add_argument("--out", type=Path, default=Path("docs/demo/assets"))
     args = parser.parse_args()
     client = TestClient(app)
     study = client.get(f"/api/studies/{args.study}").json()
