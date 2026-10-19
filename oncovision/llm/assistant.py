@@ -14,6 +14,7 @@ import logging
 from collections.abc import AsyncIterator
 
 import anthropic
+import ollama
 
 from ..config import settings
 from ..storage import Store
@@ -87,6 +88,110 @@ def _valid_input(block) -> bool:
     return isinstance(block.input, dict)
 
 
+def _ollama_tools() -> list[dict]:
+    """Convert the Anthropic tool schema to Ollama's function-tool schema."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": tool["name"],
+                "description": tool["description"],
+                "parameters": tool["input_schema"],
+            },
+        }
+        for tool in TOOLS
+    ]
+
+
+def _ollama_message_dict(message) -> dict:
+    if hasattr(message, "model_dump"):
+        return message.model_dump(exclude_none=True)
+    return dict(message)
+
+
+async def _chat_stream_ollama(store: Store, study: dict, message: str, audience: str, language: str) -> AsyncIterator[str]:
+    """Local Ollama chat path. It deliberately keeps its own message format."""
+    record = store.get_chat(study["id"])
+    messages: list[dict] = record.get("api", [])
+    display: list[dict] = record.get("display", [])
+    ctx = ToolContext(store=store, study=study)
+
+    # A chat history created by Anthropic contains provider-specific content blocks.
+    # Starting a fresh local conversation is safer than sending those blocks to Ollama.
+    if any(isinstance(item.get("content"), list) for item in messages if isinstance(item, dict)):
+        messages = []
+
+    text = f"{_tag(audience, language)}\n{message.strip()}"
+    if not messages:
+        png, idx, layers = slice_panel(ctx, None, ["original", "overlay", "heatmap"])
+        text = (
+            f"Analysis results for this study (the image above is slice {idx}, panels: {', '.join(layers)}):\n"
+            f"<findings>\n{findings_text(ctx.study)}\n</findings>\n\n{text}"
+        )
+        first_message = {"role": "user", "content": text}
+        if settings.ollama_vision:
+            first_message["images"] = [png]
+        messages.append(first_message)
+    else:
+        messages.append({"role": "user", "content": text})
+
+    client = ollama.AsyncClient(host=settings.ollama_host)
+    reply_parts: list[str] = []
+    try:
+        for _ in range(MAX_TOOL_ROUNDS):
+            response = await client.chat(
+                model=settings.ollama_model,
+                messages=messages,
+                tools=_ollama_tools(),
+                stream=False,
+            )
+            assistant_message = _ollama_message_dict(response.message)
+            messages.append(assistant_message)
+            tool_calls = assistant_message.get("tool_calls") or []
+            if not tool_calls:
+                answer = assistant_message.get("content", "")
+                if answer:
+                    reply_parts.append(answer)
+                    yield _sse({"type": "text", "text": answer})
+                break
+            for call in tool_calls:
+                function = call.get("function", {})
+                name = function.get("name", "")
+                args = function.get("arguments", {})
+                if isinstance(args, str):
+                    args = json.loads(args)
+                yield _sse({"type": "tool", "name": name, "input": args if isinstance(args, dict) else {}})
+                shown = len(ctx.images_shown)
+                try:
+                    content = run_tool(name, args, ctx)
+                    if isinstance(content, list):
+                        content = "\n".join(block.get("text", "") for block in content if isinstance(block, dict))
+                    tool_content = str(content)
+                except (ToolInputError, ValueError) as exc:
+                    tool_content = str(exc)
+                messages.append({"role": "tool", "content": tool_content, "tool_name": name})
+                for url in ctx.images_shown[shown:]:
+                    yield _sse({"type": "image", "url": url})
+        else:
+            yield _sse({"type": "text", "text": "\n\n_(Stopped after too many tool calls.)_"})
+    except ollama.ResponseError as exc:
+        messages = messages[:-1] if messages and messages[-1].get("role") == "user" else messages
+        log.warning("Ollama error: %s", exc)
+        yield _sse({"type": "error", "message": "Could not reach Ollama. Make sure Ollama is running and the model is installed."})
+        return
+    except (ollama.RequestError, ollama.ConnectionError, json.JSONDecodeError) as exc:
+        log.warning("Ollama unavailable: %s", exc)
+        yield _sse({"type": "error", "message": "Ollama is unavailable. Start Ollama and run the configured model."})
+        return
+    finally:
+        await client.close()
+
+    display.append({"role": "user", "text": message.strip(), "audience": audience, "language": language})
+    display.append({"role": "assistant", "text": "".join(reply_parts).strip(), "images": ctx.images_shown})
+    store.save_chat(study["id"], {"api": messages, "display": display})
+    yield _sse({"type": "done"})
+
+
 async def _stream_round(client, messages: list[dict], reply_parts: list[str]):
     """One model call. Yields SSE strings for text deltas, then the final message."""
     async with client.beta.messages.stream(
@@ -110,6 +215,11 @@ async def _stream_round(client, messages: list[dict], reply_parts: list[str]):
 
 async def chat_stream(store: Store, study: dict, message: str, audience: str, language: str) -> AsyncIterator[str]:
     """Answer one user message, yielding SSE events: text, tool, image, done, error."""
+    if settings.llm_provider == "ollama":
+        async for event in _chat_stream_ollama(store, study, message, audience, language):
+            yield event
+        return
+
     record = store.get_chat(study["id"])
     messages: list[dict] = record.get("api", [])
     display: list[dict] = record.get("display", [])

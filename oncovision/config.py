@@ -29,7 +29,11 @@ class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.environ.get("ONCOVISION_DATA_DIR", ROOT_DIR / "data")))
     weights_dir: Path = field(default_factory=lambda: Path(os.environ.get("ONCOVISION_WEIGHTS_DIR", ROOT_DIR / "weights")))
     frontend_dir: Path = ROOT_DIR / "frontend"
+    llm_provider: str = os.environ.get("ONCOVISION_LLM_PROVIDER", "anthropic").lower()
     llm_model: str = os.environ.get("ONCOVISION_LLM_MODEL", "claude-opus-5-5")
+    ollama_model: str = os.environ.get("ONCOVISION_OLLAMA_MODEL", "llama3.2")
+    ollama_host: str = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434")
+    ollama_vision: bool = os.environ.get("ONCOVISION_OLLAMA_VISION", "false").lower() in ("1", "true", "yes")
     # Monte-Carlo dropout passes used for uncertainty estimation.
     mc_samples: int = int(os.environ.get("ONCOVISION_MC_SAMPLES", "8"))
     # Optional override of each scan type's boundary-uncertainty review threshold
@@ -47,6 +51,8 @@ class Settings:
 
     @property
     def llm_enabled(self) -> bool:
+        if self.llm_provider == "ollama":
+            return True
         return bool(os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("ANTHROPIC_AUTH_TOKEN"))
 
 

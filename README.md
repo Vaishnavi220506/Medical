@@ -39,9 +39,25 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # or the CUDA build with an NVIDIA GPU
 pip install -r requirements.txt
-cp .env.example .env               # add ANTHROPIC_API_KEY (optional)
+cp .env.example .env               # choose an LLM provider in .env (optional)
 uvicorn oncovision.api.main:app
 ```
+
+### LLM providers
+
+The assistant supports both Claude and local Ollama. Each contributor can choose independently in `.env`:
+
+```env
+# Cloud Claude (requires ANTHROPIC_API_KEY)
+ONCOVISION_LLM_PROVIDER=anthropic
+
+# Or free/local Ollama (requires Ollama plus the model installed locally)
+ONCOVISION_LLM_PROVIDER=ollama
+ONCOVISION_OLLAMA_MODEL=llama3.2:3b
+ONCOVISION_OLLAMA_VISION=false
+```
+
+For Ollama, install the model once with `ollama run llama3.2:3b`. Text-only Ollama models use the structured scan findings; set `ONCOVISION_OLLAMA_VISION=true` only for a vision-capable model. The rest of the app works regardless of provider.
 
 Or `docker compose up --build`.
 </details>

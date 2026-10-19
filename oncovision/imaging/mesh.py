@@ -43,3 +43,26 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
         if surface:
             out["meshes"].append({"name": lbl.name, "description": lbl.description, "color": list(lbl.color), "opacity": 0.9, **surface})
     return out
+
+
+def build_pseudo_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile) -> dict:
+    """Build a visualization-only estimated extrusion from one 2D slice."""
+    if volume.shape[0] != 1 or labels.shape[0] != 1:
+        raise ValueError("Pseudo-3D preview expects one image slice")
+    depth = 16
+    label2d = labels[0]
+    pseudo_volume = np.repeat(volume, depth, axis=0)
+    pseudo_labels = np.zeros((depth, *label2d.shape), dtype=labels.dtype)
+    taper = np.sin(np.linspace(0, np.pi, depth))
+    for z, amount in enumerate(taper):
+        for lbl in profile.display_labels:
+            region = label2d == lbl.index
+            if not region.any():
+                continue
+            distance = ndimage.distance_transform_edt(region)
+            threshold = (1.0 - amount) * max(1.0, float(distance.max()) * 0.8)
+            pseudo_labels[z][distance >= threshold] = lbl.index
+    out = build_meshes(pseudo_volume, pseudo_labels, profile, (1.0, 1.0, 1.0))
+    out["pseudo"] = True
+    out["warning"] = "Estimated pseudo-3D visualization from one 2D image; depth and volume are not clinical measurements."
+    return out

@@ -388,16 +388,13 @@ function switchTab(name) {
 async function load3D() {
   const s = state.study;
   $("#mesh-toggles").innerHTML = "";
-  if (!s.scan.is_volume) {
-    $("#three-msg").textContent = "3D view needs a volume (NIfTI file or DICOM series). This study is a single 2D image.";
-    $("#three-container").innerHTML = "";
-    return;
-  }
   $("#three-msg").textContent = "Building 3D surfaces…";
   try {
     const data = await api(`/api/studies/${s.id}/mesh`);
     const handles = await renderMeshes($("#three-container"), data);
-    $("#three-msg").textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
+    $("#three-msg").textContent = data.pseudo
+      ? `Pseudo-3D preview: ${data.warning}`
+      : data.meshes.length > 1 ? "" : "No tumor surface to show.";
     $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => `
       <label><input type="checkbox" data-mesh="${i}" checked><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(${m.color.join(",")})"></i>${esc(m.description || m.name)}</label>`).join("");
     $("#mesh-toggles").onchange = (e) => { if (e.target.dataset.mesh) handles[+e.target.dataset.mesh].visible = e.target.checked; };
