@@ -167,7 +167,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v4.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v5.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)

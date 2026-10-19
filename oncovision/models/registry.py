@@ -55,6 +55,10 @@ class CancerProfile:
     # probability. Chosen per scan type on held-out scans (breast: 0.7 cut false
     # outlines on normal scans from 20% to ~15% without losing real lesions).
     gate_normal: float = 0.8
+    # What the 3D model's "found something" result is called, and the smallest finding
+    # (in voxels) it reports, for scans analyzed by a 3D model (classify_from_3d).
+    detection_display: str = "Tumor detected (3D model; tumor type not classified)"
+    detection_min_voxels: int = 200
     datasets: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -99,6 +103,7 @@ PROFILES: dict[str, CancerProfile] = {
         lesion_polarity="bright",
         guided_low_threshold=0.2,  # Dice 0.678 -> 0.690 on held-out Figshare test patients
         reporting_system="RANO (Response Assessment in Neuro-Oncology)",
+        detection_display="Brain tumor detected (3D model; sub-regions as in gliomas, tumor type not classified)",
         datasets=(
             "Kaggle Brain Tumor MRI (classification)",
             "Figshare brain tumor dataset (whole-tumor segmentation)",
@@ -141,7 +146,9 @@ PROFILES: dict[str, CancerProfile] = {
         lesion_polarity="bright",
         intensity_window=(-1000.0, 400.0),  # lung window
         reporting_system="Lung-RADS",
-        datasets=("LIDC-IDRI (nodule masks, slice classification)", "IQ-OTH/NCCD lung cancer CT (classification)"),
+        detection_display="Lung nodule found (3D model; it does not tell benign from malignant)",
+        detection_min_voxels=1,  # the 3D lung model already drops findings under 3 mm
+        datasets=("LIDC-IDRI (641 chest CTs with nodule outlines)",),
     ),
 }
 

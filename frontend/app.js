@@ -253,7 +253,8 @@ function renderMeasurements(s) {
   const m = s.measurements;
   const note = s.segmentation.note ? `<p class="hint">${esc(s.segmentation.note)}</p>` : "";
   if (!m.detected) {
-    $("#measurements-card").innerHTML = `<h3>Measurements</h3><p class="muted">No tumor region was outlined.</p>${note}`;
+    const nothing = s.profile.organ === "lung" ? "No lung nodule of 3 mm or more was found." : "No tumor region was outlined.";
+    $("#measurements-card").innerHTML = `<h3>Measurements</h3><p class="muted">${nothing}</p>${note}`;
     return;
   }
   const u = m.units;
@@ -273,10 +274,22 @@ function renderMeasurements(s) {
     const v = r.volume_cm3 != null ? `${r.volume_cm3} cm³` : r.area_mm2 != null ? `${r.area_mm2} mm²` : r.voxels ?? r.pixels;
     rows.push([r.description, `${v} · ${r.percent_of_tumor}%`]);
   }
-  $("#measurements-card").innerHTML = `<h3>Measurements</h3>
-    <table>${rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>
+  // Lung CT: one row per nodule (click to jump to it) and the size-based Lung-RADS category.
+  const nodules = m.nodules?.length ? `<h4>Nodules (largest first, click to view)</h4>
+    <table class="nodule-table"><tr><th>#</th><th>Size (${u})</th><th>Volume</th><th>Where</th></tr>
+    ${m.nodules.map((n, i) => `<tr data-slice="${n.key_slice}"><td>${i + 1}</td><td>${n.longest_diameter} × ${n.short_diameter}</td>
+      <td>${n.volume_mm3 != null ? `${n.volume_mm3} mm³` : "–"}</td><td>${esc(n.side)}, slice ${n.key_slice + 1}</td></tr>`).join("")}</table>` : "";
+  const rads = m.lung_rads ? `<div class="lung-rads"><b>Lung-RADS ${esc(m.lung_rads.category)}</b> · ${esc(m.lung_rads.meaning)}
+    <div>${esc(m.lung_rads.typical_management)}</div><p class="hint">Based only on size (mean diameter ${m.lung_rads.based_on_mean_diameter_mm} mm). ${esc(m.lung_rads.assumptions)}</p></div>` : "";
+  $("#measurements-card").innerHTML = `<h3>Measurements</h3>${rads}
+    <table>${rows.map(([a, b]) => `<tr><td>${esc(a)}</td><td>${esc(b)}</td></tr>`).join("")}</table>${nodules}
     ${s.scan.spacing_estimated ? `<p class="hint">Pixel size was estimated from typical head size, so sizes are approximate. Enter the real pixel spacing under Advanced for exact values.</p>` : ""}
     ${u === "px" ? `<p class="hint">Pixel size unknown, so sizes are in pixels. Enter the pixel spacing under Advanced.</p>` : ""}${note}`;
+  $("#measurements-card").querySelectorAll("tr[data-slice]").forEach((tr) => tr.addEventListener("click", () => {
+    state.slice = +tr.dataset.slice;
+    $("#slice-slider").value = state.slice;
+    updateSlice();
+  }));
 }
 
 function renderScanInfo(s) {
@@ -287,7 +300,7 @@ function renderScanInfo(s) {
     ["Sequences", sc.sequences.join(", ")],
     ["Scan type detection", `${s.route.method} (${pct(s.route.confidence)}): ${s.route.reason}`],
   ];
-  const outlineModels = { "3d": "3D U-Net (whole volume, all MRI types)", "multi-sequence": "2D U-Net on all MRI types (BraTS)", "single-image": "2D U-Net (single image)" };
+  const outlineModels = { "3d": s.profile.organ === "lung" ? "3D U-Net (whole CT, lungs)" : "3D U-Net (whole volume, all MRI types)", "multi-sequence": "2D U-Net on all MRI types (BraTS)", "single-image": "2D U-Net (single image)" };
   if (s.segmentation.model) rows.push(["Outline model", outlineModels[s.segmentation.model] || s.segmentation.model]);
   if (sc.spacing_mm) rows.push(["Voxel size (mm)", sc.spacing_mm.map((v) => v.toFixed(2)).join(" × ") + (sc.spacing_estimated ? " (estimated)" : "")]);
   if (sc.removed_phi?.length) rows.push(["Privacy", `Removed ${sc.removed_phi.length} identifying DICOM field(s)`]);
@@ -310,7 +323,7 @@ function updateSlice() {
   $("#slice-label").textContent = `${state.slice + 1} / ${s.scan.shape[0]}`;
   if (viewer3d && $("#three-slice").checked) viewer3d.setSlice(state.slice);
   $("#layer-help").textContent = state.layer === "heatmap" && s.segmentation.model === "3d"
-    ? "Tumor probability from the 3D model: brighter = more likely tumor."
+    ? `${s.profile.organ === "lung" ? "Nodule" : "Tumor"} probability from the 3D model: brighter = more likely.`
     : LAYER_HELP[state.layer];
   $("#legend").style.display = state.layer === "overlay" ? "flex" : "none";
 }
@@ -410,11 +423,11 @@ async function load3D() {
     const volumes = data.pseudo ? {} : Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
     $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
       const color = m.name === "anatomy" ? "103,232,249" : m.color.join(",");
-      const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : "Brain / head") : m.description || m.name;
+      const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
       return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
     }).join("");
-    $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : "Cut away brain";
+    $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : `Cut away ${(data.anatomy_label || "brain").split(" ")[0].toLowerCase()}`;
     $("#three-slice").disabled = !!data.pseudo;
     viewer3d.setSlice($("#three-slice").checked && !data.pseudo ? state.slice : null);
     viewer3d.setCut(+$("#three-cut").value);

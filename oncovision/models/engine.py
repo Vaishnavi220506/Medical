@@ -24,6 +24,7 @@ import torch.nn.functional as F
 from scipy import ndimage
 
 from ..imaging.io import Scan
+from ..imaging.lung import lung_box, lung_mask
 from ..imaging.preprocess import foreground_mask, normalize, resize2d
 from . import heuristic
 from .networks import Classifier, UNet, UNet3D, enable_mc_dropout, grad_cam, sliding_window_3d
@@ -203,6 +204,10 @@ class Engine:
     def has_models(self, profile_key: str) -> bool:
         return any(profile_key in d for d in (self.classifiers, self.segmenters, self.multiseq_segmenters, self.segmenters3d))
 
+    def needs_volume(self, profile_key: str) -> bool:
+        """True when the only model for this scan type is 3D (lung CT), so a single image can't be analyzed."""
+        return profile_key in self.segmenters3d and profile_key not in self.segmenters and profile_key not in self.classifiers
+
     @property
     def demo_mode(self) -> bool:
         return not (self.classifiers or self.segmenters or self.multiseq_segmenters or self.segmenters3d)
@@ -326,15 +331,21 @@ class Engine:
         factors = [s / target for s in scan.spacing] if scan.spacing else [1.0, 1.0, 1.0]
         if any(abs(f - 1) > 0.1 for f in factors):
             x = np.stack([ndimage.zoom(c, factors, order=1) for c in x])
-        # Crop to the brain exactly as in training (train_segmenter3d.prepare): the model's
-        # instance normalization was calibrated on brain-cropped volumes, and running it on a
-        # mostly-empty full volume degrades it badly (Dice 0.96 -> 0.44 on a test patient).
-        brain = x.max(0) > 0.02
+        # Crop exactly as in training. Brain (train_segmenter3d.prepare): the model's instance
+        # normalization was calibrated on brain-cropped volumes, and running it on a mostly-empty
+        # full volume degrades it badly (Dice 0.96 -> 0.44 on a test patient). Lung
+        # (train_lung3d.prepare): the model only ever saw the lungs.
         probs_full = np.zeros((meta["num_classes"], *x.shape[1:]), dtype=np.float32)
         probs_full[0] = 1.0
-        if brain.any():
-            idx = [np.where(brain.any(axis=a))[0] for a in ((1, 2), (0, 2), (0, 1))]
-            crop = tuple(slice(max(i[0] - 4, 0), i[-1] + 5) for i in idx)
+        crop = None
+        if meta.get("crop") == "lungs":
+            crop = lung_box(x[0])
+        else:
+            brain = x.max(0) > 0.02
+            if brain.any():
+                idx = [np.where(brain.any(axis=a))[0] for a in ((1, 2), (0, 2), (0, 1))]
+                crop = tuple(slice(max(i[0] - 4, 0), i[-1] + 5) for i in idx)
+        if crop is not None:
             t = torch.from_numpy(np.ascontiguousarray(x[(slice(None), *crop)])).float().to(self.device)
             p = sliding_window_3d(model, t, patch=meta.get("patch", 128), overlap=0.25, flip_tta=self.device.type != "cpu")
             probs_full[(slice(None), *crop)] = p.cpu().numpy()
@@ -343,12 +354,25 @@ class Engine:
             probs = np.stack([ndimage.zoom(p, [a / b for a, b in zip(shape, p.shape)], order=1) for p in probs])[:, : shape[0], : shape[1], : shape[2]]
         probs = probs / np.clip(probs.sum(0, keepdims=True), 1e-6, None)
         to_label = np.array(meta.get("label_indices", range(probs.shape[0])), dtype=np.uint8)
-        labels = to_label[probs.argmax(0)]
         fg_prob = (1.0 - probs[0]).astype(np.float32)
         fg_label = to_label[1 + probs[1:].argmax(0)]
-        # Drop isolated speckles: components under 10% of the largest tumor component.
+        if meta.get("threshold") is not None:  # threshold tuned on validation scans
+            labels = np.where(fg_prob > meta["threshold"], fg_label, 0).astype(np.uint8)
+        else:
+            labels = to_label[probs.argmax(0)]
         comp, n = ndimage.label(labels > 0)
-        if n > 1:
+        if n and meta.get("min_component_voxels"):
+            # Lung nodules: several real ones of very different sizes can coexist, so keep every
+            # finding of at least 3 mm (training grid 1 mm, so voxels = mm3) inside the lungs.
+            voxel_mm3 = float(np.prod(scan.spacing)) if scan.spacing else 1.0
+            sizes = np.asarray(ndimage.sum(labels > 0, comp, range(1, n + 1))) * voxel_mm3
+            drop = sizes < meta["min_component_voxels"]
+            if meta.get("crop") == "lungs":
+                lungs = ndimage.binary_dilation(lung_mask(channel_stack(scan, ("image",))[0]), iterations=3)
+                drop |= np.asarray(ndimage.maximum(lungs, comp, range(1, n + 1))) == 0
+            labels[np.isin(comp, np.where(drop)[0] + 1)] = 0
+        elif n > 1:
+            # Drop isolated speckles: components under 10% of the largest tumor component.
             sizes = ndimage.sum(labels > 0, comp, range(1, n + 1))
             labels[np.isin(comp, np.where(sizes < 0.1 * sizes.max())[0] + 1)] = 0
         uncertainty = _entropy(probs, axis=0).astype(np.float32)
@@ -356,7 +380,7 @@ class Engine:
         return Segmentation("model", labels.astype(np.uint8), uncertainty, fg_prob=fg_prob, fg_label=fg_label, model="3d")
 
     def classify_from_3d(self, seg: Segmentation, profile: CancerProfile) -> tuple[Classification, np.ndarray]:
-        """Tumor presence from the 3D model, used instead of the 2D classifier for 3D multi-sequence scans.
+        """Tumor presence from the 3D model, used instead of the 2D classifier for scans a 3D model analyzed.
 
         The 2D classifier was trained on single slices with the skull visible and is unreliable on
         skull-stripped 3D research volumes (it called a 133 cm3 glioma "no tumor"). The 3D model was
@@ -365,9 +389,9 @@ class Engine:
         """
         tumor = seg.labels > 0
         volume_voxels = int(tumor.sum())
-        if volume_voxels >= MIN_TUMOR_PIXELS * 10:
+        if volume_voxels >= profile.detection_min_voxels:
             p_tumor = float(seg.fg_prob[tumor].mean())
-            label, display = "tumor", "Brain tumor detected (3D model; sub-regions as in gliomas, tumor type not classified)"
+            label, display = "tumor", profile.detection_display
         else:
             p_tumor = float(min(seg.fg_prob.max(), 0.5)) if seg.fg_prob is not None else 0.0
             label, display = profile.normal_class, profile.class_descriptions[profile.normal_class]

@@ -140,4 +140,62 @@ def measure(
         if profile.organ == "breast":
             location["depth_from_skin"] = round(float(np.nonzero(lesion[best])[0].min()) * dy, 1)
         result["location"] = location
+    if profile.organ == "lung" and is_3d:
+        result["nodules"] = _nodules(lesion, reference, (dz, dy, dx), bool(spacing))
+        if spacing and result["nodules"]:
+            result["lung_rads"] = lung_rads(max(n["mean_diameter"] for n in result["nodules"]))
     return plain(result)
+
+
+def _nodules(lesion: np.ndarray, reference: np.ndarray, spacing, has_spacing: bool, limit: int = 10) -> list[dict]:
+    """Each nodule's size and position, largest first."""
+    dz, dy, dx = spacing
+    comp, n = ndimage.label(lesion)
+    if not n:
+        return []
+    sizes = ndimage.sum(lesion, comp, range(1, n + 1))
+    body = np.stack([foreground_mask(s) for s in normalize(reference)[:: max(1, reference.shape[0] // 16)]]).any(0)
+    cols = np.where(body.any(axis=0))[0]
+    midline = (cols[0] + cols[-1]) / 2 if cols.size else lesion.shape[2] / 2
+    out = []
+    for i in np.argsort(sizes)[::-1][:limit]:
+        mask = comp == i + 1
+        areas = mask.sum(axis=(1, 2))
+        z = int(np.argmax(areas))
+        longest, short = _diameters(mask[z], dy, dx)
+        cz, cy, cx = ndimage.center_of_mass(mask)
+        nodule = {
+            "key_slice": z,
+            "longest_diameter": round(longest, 1),
+            "short_diameter": round(short, 1),
+            "mean_diameter": round((longest + short) / 2, 1),
+            "volume_mm3": round(float(sizes[i]) * dz * dy * dx, 1) if has_spacing else None,
+            # Radiological convention: image left = patient right.
+            "side": "right lung" if cx < midline else "left lung",
+            "centroid": {"slice": round(cz, 1), "row": round(cy, 1), "col": round(cx, 1)},
+        }
+        out.append(nodule)
+    return out
+
+
+def lung_rads(mean_diameter_mm: float) -> dict:
+    """Lung-RADS v2022 category from the largest nodule's mean diameter, assuming a solid nodule on a
+    first (baseline) screening CT. The real category also depends on nodule type (solid, part-solid,
+    ground glass), growth on earlier scans and suspicious features."""
+    d = mean_diameter_mm
+    if d < 6:
+        category, meaning, follow_up = "2", "Benign appearance or behavior", "Continue annual screening CT in 12 months"
+    elif d < 8:
+        category, meaning, follow_up = "3", "Probably benign", "Follow-up low-dose CT in 6 months"
+    elif d < 15:
+        category, meaning, follow_up = "4A", "Suspicious", "Low-dose CT in 3 months; PET/CT may be considered"
+    else:
+        category, meaning, follow_up = "4B", "Very suspicious", "Chest CT, PET/CT and/or tissue sampling, per the care team"
+    return {
+        "category": category,
+        "meaning": meaning,
+        "typical_management": follow_up,
+        "based_on_mean_diameter_mm": round(d, 1),
+        "assumptions": "Solid nodule on a baseline screening CT. The real category also depends on nodule type, "
+        "growth compared with earlier scans and other features that this tool does not assess.",
+    }

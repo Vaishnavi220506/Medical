@@ -212,3 +212,10 @@ tr:last-child td { border-bottom: none; }
 .analyzing-steps li.active { color: var(--text); font-weight: 600; }
 @media (prefers-reduced-motion: reduce) { .analyzing-preview::after { animation: none; display: none; } }
 @media (max-width: 860px) { .analyzing { grid-template-columns: 1fr; } }
+
+/* Lung CT: nodule list and Lung-RADS box */
+.nodule-table tr[data-slice] { cursor: pointer; }
+.nodule-table tr[data-slice]:hover td { background: var(--hover, rgba(56, 189, 248, 0.08)); }
+.nodule-table th { text-align: left; font-weight: 600; color: var(--muted); font-size: 12px; }
+.lung-rads { border: 1px solid rgba(245, 158, 11, 0.45); background: rgba(245, 158, 11, 0.08); border-radius: 10px; padding: 10px 12px; margin: 4px 0 10px; }
+.lung-rads div { margin-top: 4px; }

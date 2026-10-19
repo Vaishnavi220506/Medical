@@ -110,6 +110,11 @@ def analyze(
             "Pick the scan type manually to analyze anyway."
         )
     profile = get_profile(route.profile)
+    if engine.needs_volume(profile.key) and not scan.is_volume:
+        raise UnsupportedScanError(
+            f"{profile.display_name} analysis needs the whole CT scan (a DICOM series, a zipped DICOM folder or a "
+            "NIfTI file), not a single image: nodules are found in 3D."
+        )
     apply_window(scan, profile)
 
     if scan.spacing is None and profile.organ == "brain":

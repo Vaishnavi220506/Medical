@@ -7,6 +7,7 @@ from scipy import ndimage
 from skimage.measure import marching_cubes
 
 from ..models.registry import CancerProfile
+from .lung import lung_mask
 from .preprocess import foreground_mask, normalize
 
 MAX_DIM = 128  # downsample large volumes so meshes stay light in the browser
@@ -33,9 +34,14 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
     lab = labels[::factor, ::factor, ::factor] if factor > 1 else labels
     sp = tuple(s * factor for s in spacing)
 
-    body = np.stack([foreground_mask(s) for s in vol])
     out: dict = {"spacing": sp, "voxel_mm": list(spacing), "shape": list(volume.shape), "meshes": []}
-    surface = _surface(ndimage.binary_fill_holes(body), sp, step=2, sigma=1.6)
+    lungs = lung_mask(vol) if profile.organ == "lung" else None
+    if lungs is not None and lungs.any():  # chest CT: show the lungs, not the outer body shell
+        anatomy, out["anatomy_label"] = lungs, "Lungs"
+    else:
+        anatomy = ndimage.binary_fill_holes(np.stack([foreground_mask(s) for s in vol]))
+        out["anatomy_label"] = "Brain / head" if profile.organ == "brain" else "Body outline"
+    surface = _surface(anatomy, sp, step=2, sigma=1.6)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
     for lbl in profile.display_labels:
