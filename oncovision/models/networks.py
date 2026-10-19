@@ -180,6 +180,23 @@ class UNet3D(nn.Module):
         return self.head(x)
 
 
+class NoduleClassifier3D(nn.Module):
+    """Small 3D CNN that scores a 48 mm cube around a lung nodule (benign vs malignant)."""
+
+    def __init__(self, num_classes: int = 2, base: int = 16, dropout: float = 0.3):
+        super().__init__()
+        chs = [base, base * 2, base * 4, base * 8]
+        layers, prev = [], 1
+        for ch in chs:
+            layers += [ConvBlock3d(prev, ch), nn.MaxPool3d(2)]
+            prev = ch
+        self.features = nn.Sequential(*layers)
+        self.head = nn.Sequential(nn.AdaptiveAvgPool3d(1), nn.Flatten(), nn.Dropout(dropout), nn.Linear(prev, num_classes))
+
+    def forward(self, x):
+        return self.head(self.features(x))
+
+
 def sliding_window_3d(model: nn.Module, volume: torch.Tensor, patch: int = 128, overlap: float = 0.5, flip_tta: bool = True) -> torch.Tensor:
     """Softmax probabilities for a (C, Z, Y, X) volume using overlapping patches.
 

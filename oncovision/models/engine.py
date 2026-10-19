@@ -214,6 +214,9 @@ class Engine:
 
     # ------------------------------------------------------------------ routing
     def route(self, scan: Scan) -> RouteResult:
+        meta = {k: v.upper() for k, v in scan.metadata.items()}
+        if meta.get("Modality") == "MR" and "BREAST" in meta.get("BodyPartExamined", ""):
+            return RouteResult("breast_mri", 0.95, "metadata", reason="DICOM modality MR, body part breast.")
         if self.router is not None:
             model, meta = self.router
             classes = meta.get("classes", list(ROUTER_CLASSES))
@@ -237,6 +240,8 @@ class Engine:
     def _heuristic_route(self, scan: Scan) -> RouteResult:
         meta = {k: v.upper() for k, v in scan.metadata.items()}
         modality, body = meta.get("Modality", ""), meta.get("BodyPartExamined", "")
+        if modality == "MR" and "BREAST" in body:
+            return RouteResult("breast_mri", 0.95, "metadata", reason="DICOM modality MR, body part breast.")
         if modality == "MR" or {"flair", "t1ce", "t2"} & set(scan.channels):
             return RouteResult("brain_mri", 0.9, "metadata", reason="MRI sequences / DICOM modality MR.")
         if modality == "CT" or "CHEST" in body or "LUNG" in body:
@@ -267,7 +272,7 @@ class Engine:
         return RouteResult("breast_us", 0.45, "heuristic", reason="Irregular field of view, guessed ultrasound.")
 
     # ------------------------------------------------------------------ segmentation
-    def segment(self, scan: Scan, profile: CancerProfile) -> Segmentation:
+    def segment(self, scan: Scan, profile: CancerProfile, _cropped: bool = False) -> Segmentation:
         chosen, model_name = self._segmenter_for(scan, profile)
         if chosen is None:
             labels, uncertainty, saliency = heuristic.segment(
@@ -278,6 +283,19 @@ class Engine:
         if model_name == "3d":
             return self._segment3d(scan, profile, *chosen)
         model, meta = chosen
+        if meta.get("crop") == "lungs" and not _cropped:
+            # 2D lung model: trained on slices cropped to the lungs (export_slices), so crop the same way.
+            box = lung_box(channel_stack(scan, ("image",))[0])
+            if box is not None:
+                sub = Scan(channels={k: v[:, box[1], box[2]] for k, v in scan.channels.items()}, spacing=scan.spacing, source_format=scan.source_format)
+                part = self.segment(sub, profile, _cropped=True)
+                for name in ("labels", "uncertainty", "fg_prob", "fg_label"):
+                    arr = getattr(part, name)
+                    if arr is not None:
+                        full = np.zeros(scan.shape, dtype=arr.dtype)
+                        full[:, box[1], box[2]] = arr
+                        setattr(part, name, full)
+                return part
         channels = tuple(meta.get("channels", profile.seg_channels))
         size = meta.get("image_size", profile.seg_size)
         # Model output class i -> label value (binary whole-tumor models map 1 -> the "tumor" label).
@@ -361,12 +379,12 @@ class Engine:
         else:
             labels = to_label[probs.argmax(0)]
         comp, n = ndimage.label(labels > 0)
-        if n and meta.get("min_component_voxels"):
-            # Lung nodules: several real ones of very different sizes can coexist, so keep every
-            # finding of at least 3 mm (training grid 1 mm, so voxels = mm3) inside the lungs.
+        if n and meta.get("min_component_mm3"):
+            # Lung nodules and breast tumors: several real lesions of very different sizes can
+            # coexist, so keep every finding above the minimum size (inside the lungs for CT).
             voxel_mm3 = float(np.prod(scan.spacing)) if scan.spacing else 1.0
             sizes = np.asarray(ndimage.sum(labels > 0, comp, range(1, n + 1))) * voxel_mm3
-            drop = sizes < meta["min_component_voxels"]
+            drop = sizes < meta["min_component_mm3"]
             if meta.get("crop") == "lungs":
                 lungs = ndimage.binary_dilation(lung_mask(channel_stack(scan, ("image",))[0]), iterations=3)
                 drop |= np.asarray(ndimage.maximum(lungs, comp, range(1, n + 1))) == 0
@@ -475,6 +493,9 @@ class Engine:
     def classify(self, scan: Scan, profile: CancerProfile, seg: Segmentation) -> tuple[Classification, np.ndarray]:
         """Classify the scan and return ``(classification, heatmap volume)``."""
         if profile.key not in self.classifiers:
+            if seg.method == "model" and seg.fg_prob is not None:
+                # Lung CT and breast MRI single images: the outline model decides whether a lesion is present.
+                return self.classify_from_3d(seg, profile)
             return self._heuristic_classify(scan, profile, seg)
 
         model, meta = self.classifiers[profile.key]

@@ -124,7 +124,8 @@ def analyze(
             scan.spacing_estimated = True
 
     seg = engine.segment(scan, profile)
-    if seg.model == "3d":
+    if seg.model == "3d" or (profile.key not in engine.classifiers and seg.method == "model"):
+        # No separate classifier: the outline model itself decides whether a lesion is present.
         cls, heat = engine.classify_from_3d(seg, profile)
     else:
         cls, heat = engine.classify(scan, profile, seg)

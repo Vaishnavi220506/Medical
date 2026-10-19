@@ -129,6 +129,23 @@ PROFILES: dict[str, CancerProfile] = {
         reporting_system="BI-RADS (Breast Imaging Reporting and Data System)",
         datasets=("BUSI - Breast Ultrasound Images Dataset",),
     ),
+    "breast_mri": CancerProfile(
+        key="breast_mri",
+        display_name="Breast tumor (MRI)",
+        organ="breast",
+        modality="MRI",
+        classes=("no_tumor", "tumor"),
+        class_descriptions={"no_tumor": "No tumor detected", "tumor": "Breast tumor"},
+        normal_class="no_tumor",
+        seg_labels=(SegLabel(1, "tumor", (244, 63, 94), "Breast tumor"),),
+        seg_size=256,
+        reporting_system="BI-RADS (MRI); RECIST 1.1 for treatment response",
+        # MAMA-MIA contains only cancers, so the model finds and measures tumors but
+        # cannot tell benign from malignant.
+        detection_display="Breast tumor found (MRI model; it does not tell benign from malignant)",
+        detection_min_voxels=20,
+        datasets=("MAMA-MIA (1,506 breast cancer DCE-MRI scans with expert tumor outlines)",),
+    ),
     "lung_ct": CancerProfile(
         key="lung_ct",
         display_name="Lung nodule (CT)",
@@ -146,8 +163,8 @@ PROFILES: dict[str, CancerProfile] = {
         lesion_polarity="bright",
         intensity_window=(-1000.0, 400.0),  # lung window
         reporting_system="Lung-RADS",
-        detection_display="Lung nodule found (3D model; it does not tell benign from malignant)",
-        detection_min_voxels=1,  # the 3D lung model already drops findings under 3 mm
+        detection_display="Lung nodule found (it does not tell benign from malignant)",
+        detection_min_voxels=10,  # the 3D lung model also drops findings under 3 mm
         datasets=("LIDC-IDRI (641 chest CTs with nodule outlines)",),
     ),
 }

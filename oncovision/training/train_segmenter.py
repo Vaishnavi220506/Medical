@@ -91,6 +91,7 @@ def main() -> None:
     parser.add_argument("--init", type=Path, help="Start from an existing checkpoint (fine-tuning)")
     parser.add_argument("--size", type=int, help="Training image size (default: the scan type's seg_size)")
     parser.add_argument("--slice-step", type=int, default=1, help="BraTS: keep every n-th slice when preparing")
+    parser.add_argument("--crop", choices=("lungs",), help="The images were cropped to this region (export_slices); the app crops the same way")
     args = parser.parse_args()
 
     seed_everything()
@@ -144,6 +145,8 @@ def main() -> None:
         "base": args.base,
         "architecture": "unet2d",
     }
+    if args.crop:
+        meta["crop"] = args.crop
 
     best = -1.0
     for epoch in range(args.epochs):

@@ -124,7 +124,7 @@ def measure(
         col_frac = (cx - cols[0]) / max(cols[-1] - cols[0], 1)
         offset = (cx - midline) * dx
         location: dict = {}
-        if profile.organ != "breast":  # an ultrasound image has no patient midline
+        if profile.modality != "Ultrasound":  # an ultrasound image has no patient midline
             location["distance_from_midline"] = round(abs(offset), 1)
             if abs(offset) < 0.04 * (cols[-1] - cols[0]) * dx:
                 location["side"] = "midline"
@@ -137,7 +137,7 @@ def measure(
         if profile.organ == "brain" and axial_volume:
             z_frac = cz / max(labels.shape[0] - 1, 1) if is_3d else None
             location["approximate_region"] = _brain_region(row_frac, col_frac, z_frac)
-        if profile.organ == "breast":
+        if profile.modality == "Ultrasound":
             location["depth_from_skin"] = round(float(np.nonzero(lesion[best])[0].min()) * dy, 1)
         result["location"] = location
     if profile.organ == "lung" and is_3d:

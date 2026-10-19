@@ -28,7 +28,7 @@ def test_health_and_profiles(client):
     health = client.get("/api/health").json()
     assert health["demo_mode"] is True
     keys = {p["key"] for p in client.get("/api/profiles").json()}
-    assert keys == {"brain_mri", "breast_us", "lung_ct"}
+    assert keys == {"brain_mri", "breast_us", "breast_mri", "lung_ct"}
 
 
 def test_full_flow(client, demo_dir):

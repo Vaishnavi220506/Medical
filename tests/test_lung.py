@@ -56,7 +56,7 @@ def test_3d_lung_path_filters_findings(tmp_path):
     """Plumbing of the 3D lung path: findings outside the lungs or under 3 mm are dropped."""
     model = UNet3D(1, 2, base=4)
     meta = {"architecture": "unet3d", "channels": ["image"], "num_classes": 2, "label_indices": [0, 1], "base": 4,
-            "patch": 32, "spacing_mm": 1.0, "crop": "lungs", "threshold": 0.5, "min_component_voxels": 14}
+            "patch": 32, "spacing_mm": 1.0, "crop": "lungs", "threshold": 0.5, "min_component_mm3": 14}
     (tmp_path / "lung_ct").mkdir()
     torch.save({"state_dict": model.state_dict(), "meta": meta}, tmp_path / "lung_ct" / "segmenter3d.pt")
     engine = Engine(tmp_path, device="cpu")
