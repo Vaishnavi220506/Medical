@@ -77,10 +77,12 @@ All numbers are on **held-out real scans the models never trained on**, split by
 | Scans tested | 400 | 117 | 221 | 120 |
 | Scan type recognised | **100%** | **100%** | refused (no model yet) | **100% rejected** |
 | Correct diagnosis | **95.0%** | **84.6%** | – | – |
-| Tumor outlined | 55.7% | 91.8% | – | – |
+| Tumor outlined | 65.7%¹ | 91.8% | – | – |
 | Normal scans wrongly outlined | **1%** | 20% | – | – |
 | Flagged for expert review | 45% | 30% | – | – |
 | Time per image (4-core CPU) | 0.6 s | 0.7 s | – | – |
+
+¹ With the retrained 2D brain outline model, on 100 test images per class (glioma 84%, meningioma 90%, pituitary 23%); the previous model outlined 61% of the same images. Other brain numbers are from the 400-image run.
 
 ### 3D brain tumor model (BraTS 2023, whole 3D volumes)
 
@@ -11063,7 +11065,7 @@ endsolid tumor
 | Model | Data (held-out set) | Result |
 |---|---|---|
 | Brain tumor type, ResNet-18 | 1,600 test MRIs (Masoud Nickparvar dataset) | **95.7% accuracy**, macro-F1 0.956. No tumor 99.8% recall, pituitary 99.8%, meningioma 98%, glioma 85% (mostly confused with meningioma) |
-| Brain tumor outline, U-Net | 542 slices from held-out patients (Figshare) | **Dice 0.67**; false outline on 1.5% of 400 normal MRIs |
+| Brain tumor outline, U-Net | 542 slices from held-out Figshare patients; 240 slices (all views, T1ce / FLAIR / T2) from held-out BraTS patients | **Dice 0.68** (Figshare), **0.67** (BraTS; previous Figshare-only model 0.17); in the app, false outlines on 1% of normal MRIs |
 | Breast lesion type, ResNet-18 | 117 BUSI images (validation split) | **85.5% accuracy** (normal 90%, benign 85%, malignant 84% recall) |
 | Breast lesion outline, U-Net | 117 BUSI images (validation split) | **Dice 0.61** |
 | Scan-type router | brain / breast / lung / other | 100% on validation and on the end-to-end sets above |
@@ -11085,7 +11087,7 @@ Brain tumor outlines (held-out Figshare patients) and breast lesion outlines (BU
 
 ### How to read these numbers honestly
 
-- **2D brain outlines (single JPG/PNG images) are missing on ~44% of tumors in the end-to-end test.** The 2D outline model was trained on Figshare (contrast-enhanced T1), while the test set also has T2/FLAIR images and other sources. It misses many small pituitary tumors in particular. When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. With full 3D MRI (four sequences) the 3D model is used instead and is far more accurate (Dice 0.88).
+- **2D brain outlines (single JPG/PNG images) are missing on about a third of tumors in the end-to-end test.** The outline model is trained on Figshare (contrast-enhanced T1), normal brains and BraTS slices in all three views and sequences; it now outlines 84% of gliomas and 90% of meningiomas, but misses most small pituitary tumors (23% outlined). When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. With full 3D MRI (four sequences) the 3D model is used instead and is far more accurate (Dice 0.88).
 - **The classifier guides the outline.** When the classifier is confident a scan is normal (above 80%), no outline is reported and a note explains why. For brain, when it is confident a tumor is present, a lower threshold extends the outline the model already found. Both rules were checked against expert masks and only kept where they helped.
 - **Breast normals:** 20% still get a small outline. BUSI has only 133 normal images.
 - **Lung CT is not included yet.** A lung model was trained on 80 LIDC-IDRI cases but did no better than chance on held-out patients, so it was not shipped. Lung CTs are recognised and refused with a clear message (choosing the type manually runs a clearly labeled experimental detector). A proper lung model needs nodule-centred patches and 3D context.
@@ -11101,7 +11103,7 @@ Trained weights are already in `weights/`. To retrain or improve them, use the o
 | Model | Dataset | Command |
 |---|---|---|
 | Brain classifier | Brain Tumor MRI (Masoud Nickparvar, 7,200 images) | `python -m oncovision.training.train_classifier --profile brain_mri --train-dir data/brain/Training --test-dir data/brain/Testing --pretrained` |
-| Brain segmenter | Figshare (3,064 slices) + normal brains | `python scripts/prepare_figshare.py --download --out data/figshare --negatives data/brain/Training/notumor` then `python -m oncovision.training.train_segmenter --profile brain_mri --format maskfolder --data data/figshare/train/images --masks data/figshare/train/masks` |
+| Brain segmenter | Figshare (3,064 slices) + normal brains + BraTS 2023 slices (all views and sequences) | `python scripts/prepare_figshare.py --download --out data/figshare --negatives data/brain/Training/notumor` and `python scripts/prepare_brats_slices2d.py --data data/BraTS2023 --out data/brats2d`, put both image/mask folders together, then `python -m oncovision.training.train_segmenter --profile brain_mri --format maskfolder --data <images> --masks <masks>` |
 | 3D brain tumor (sub-regions) | BraTS 2023 (1,251 scans, 4 sequences) | Kaggle notebook [`notebooks/train_3d_brats.ipynb`](notebooks/train_3d_brats.ipynb), or `python -m oncovision.training.train_segmenter3d --data .../BraTS2023 --prepared-dir /tmp/brats3d` (needs a GPU) |
 | Breast classifier + segmenter | BUSI (780 images) | `train_classifier --profile breast_us --train-dir data/busi --pretrained` and `train_segmenter --profile breast_us --format busi --data data/busi` |
 | Scan-type router | one folder per scan type | `python -m oncovision.training.train_classifier --router --train-dir data/router --pretrained` |
