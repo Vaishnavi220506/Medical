@@ -166,9 +166,15 @@ class Engine:
                 self.segmenters3d[key] = seg3d
 
     def _segmenter_for(self, scan: Scan, profile: CancerProfile):
-        """Most specific model first: 3D for multi-sequence volumes, then multi-sequence 2D, then single-image."""
+        """Most specific model first: 3D for volumes with a known MRI sequence, then multi-sequence 2D, then single-image.
+
+        The 3D model was trained with randomly missing sequences and stays accurate with one
+        (held-out Dice: T1ce only 0.91, FLAIR only 0.90, T2 only 0.84; all four 0.88-0.89).
+        It was trained on skull-stripped research scans, so it needs the sequence to be named
+        (file name or the upload form); unlabeled clinical DICOM series use the 2D model.
+        """
         seg3d = self.segmenters3d.get(profile.key)
-        if seg3d and scan.is_volume and sum(c in scan.channels for c in seg3d[1]["channels"]) >= 2:
+        if seg3d and scan.is_volume and any(c in scan.channels for c in seg3d[1]["channels"]):
             return seg3d, "3d"
         multi = self.multiseq_segmenters.get(profile.key)
         if multi and sum(c in scan.channels for c in multi[1].get("channels", ())) >= 2:

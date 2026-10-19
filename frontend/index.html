@@ -155,10 +155,28 @@
         </section>
 
         <section class="tabpane" id="tab-three" hidden>
-          <div class="card three-card">
-            <div class="toolbar"><div id="mesh-toggles" class="toggles"></div><span class="hint">Drag to rotate, scroll to zoom</span></div>
-            <div id="three-container"></div>
-            <p class="hint" id="three-msg"></p>
+          <div class="card three-card" id="three-card">
+            <div class="three-stage">
+              <div id="three-container"></div>
+              <div class="three-hud three-legend" id="mesh-toggles"></div>
+              <div class="three-hud three-actions">
+                <div class="seg small">
+                  <button type="button" data-view="front">Front</button>
+                  <button type="button" data-view="side">Side</button>
+                  <button type="button" data-view="top">Top</button>
+                  <button type="button" data-view="angled">3/4</button>
+                </div>
+                <button type="button" class="btn small active" id="three-rotate" title="Auto-rotate">⟳ Rotate</button>
+                <button type="button" class="btn small" id="three-shot" title="Save a picture">📷</button>
+                <button type="button" class="btn small" id="three-full" title="Fullscreen">⛶</button>
+              </div>
+              <div class="three-hud three-bottom">
+                <label>Cut away brain <input type="range" id="three-cut" min="0" max="0.95" step="0.01" value="0"></label>
+                <label class="check"><input type="checkbox" id="three-slice" checked> Show current slice</label>
+                <span class="hint">Drag to rotate · scroll to zoom · right-drag to move</span>
+              </div>
+              <p class="three-msg" id="three-msg"></p>
+            </div>
           </div>
         </section>
 

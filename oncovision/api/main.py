@@ -168,7 +168,7 @@ def mesh(sid: str):
     s = _study(sid)
     if not s["scan"]["is_volume"]:
         raise HTTPException(400, "3D view needs a volumetric scan (NIfTI or a DICOM series).")
-    cache = settings.data_dir / "studies" / sid / "mesh.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v2.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)

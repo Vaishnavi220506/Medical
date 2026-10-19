@@ -1,4 +1,5 @@
 import { renderMeshes, disposeViewer } from "./viewer3d.js";
+let viewer3d = null;
 import { SliceViewer } from "./sliceviewer.js";
 
 const $ = (sel) => document.querySelector(sel);
@@ -307,6 +308,7 @@ function updateSlice() {
   const url = (layer) => `/api/studies/${s.id}/slice/${state.slice}.png?layer=${layer}${seq}`;
   viewer.show(url("original"), state.layer === "original" ? null : url(state.layer), `${s.id}:${state.slice}`).catch(() => {});
   $("#slice-label").textContent = `${state.slice + 1} / ${s.scan.shape[0]}`;
+  if (viewer3d && $("#three-slice").checked) viewer3d.setSlice(state.slice);
   $("#layer-help").textContent = state.layer === "heatmap" && s.segmentation.model === "3d"
     ? "Tumor probability from the 3D model: brighter = more likely tumor."
     : LAYER_HELP[state.layer];
@@ -380,33 +382,73 @@ function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("active", t.dataset.tab === name));
   for (const pane of ["viewer", "three", "timeline"]) $(`#tab-${pane}`).hidden = pane !== name;
   if (name === "three") load3D();
-  else disposeViewer();
+  else {
+    disposeViewer();
+    viewer3d = null;
+  }
   if (name === "timeline") loadTimeline();
 }
 
 // ------------------------------------------------------------------ 3D
 async function load3D() {
   const s = state.study;
+  const msg = $("#three-msg");
   $("#mesh-toggles").innerHTML = "";
+  viewer3d = null;
   if (!s.scan.is_volume) {
-    $("#three-msg").textContent = "3D view needs a volume (NIfTI file or DICOM series). This study is a single 2D image.";
+    msg.textContent = "The 3D view needs a 3D scan (a NIfTI file or a DICOM series). This study is a single 2D image.";
     $("#three-container").innerHTML = "";
     return;
   }
-  $("#three-msg").textContent = "Building 3D surfaces…";
+  msg.textContent = "Building 3D surfaces…";
   try {
     const data = await api(`/api/studies/${s.id}/mesh`);
-    const handles = await renderMeshes($("#three-container"), data);
-    $("#three-msg").textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
-    $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => `
-      <label><input type="checkbox" data-mesh="${i}" checked><i style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgb(${m.color.join(",")})"></i>${esc(m.description || m.name)}</label>`).join("");
-    $("#mesh-toggles").onchange = (e) => { if (e.target.dataset.mesh) handles[+e.target.dataset.mesh].visible = e.target.checked; };
+    viewer3d = await renderMeshes($("#three-container"), data);
+    viewer3d.onAutoRotate = (on) => $("#three-rotate").classList.toggle("active", on);
+    msg.textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
+    const volumes = Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
+    $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
+      const color = m.name === "anatomy" ? "103,232,249" : m.color.join(",");
+      const label = m.name === "anatomy" ? "Brain / head" : m.description || m.name;
+      const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
+      return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
+    }).join("");
+    viewer3d.setSlice($("#three-slice").checked ? state.slice : null);
+    viewer3d.setCut(+$("#three-cut").value);
   } catch (err) {
     const offline = /import|module|fetch/i.test(err.message);
-    $("#three-msg").textContent = offline
+    msg.textContent = offline
       ? "Could not load the 3D library (needs an internet connection the first time)."
-      : `Could not load 3D view: ${err.message}`;
+      : `Could not load the 3D view: ${err.message}`;
   }
+}
+
+function setup3D() {
+  $("#mesh-toggles").addEventListener("change", (e) => {
+    const i = e.target.dataset.mesh;
+    if (i == null || !viewer3d) return;
+    viewer3d.setVisible(+i, e.target.checked);
+    e.target.closest(".legend-chip").classList.toggle("off", !e.target.checked);
+  });
+  document.querySelectorAll("[data-view]").forEach((b) => b.addEventListener("click", () => viewer3d?.view(b.dataset.view)));
+  $("#three-rotate").addEventListener("click", (e) => {
+    const on = !e.currentTarget.classList.contains("active");
+    e.currentTarget.classList.toggle("active", on);
+    viewer3d?.setAutoRotate(on);
+  });
+  $("#three-cut").addEventListener("input", (e) => viewer3d?.setCut(+e.target.value));
+  $("#three-slice").addEventListener("change", (e) => viewer3d?.setSlice(e.target.checked ? state.slice : null));
+  $("#three-shot").addEventListener("click", () => {
+    if (!viewer3d) return;
+    const a = document.createElement("a");
+    a.href = viewer3d.screenshot();
+    a.download = `oncovision-3d-${state.study?.patient.label || "scan"}.png`;
+    a.click();
+  });
+  $("#three-full").addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else $("#three-card").requestFullscreen?.();
+  });
 }
 
 // ------------------------------------------------------------------ timeline
@@ -571,6 +613,7 @@ function setupChat() {
 // ------------------------------------------------------------------ boot
 setupUpload();
 setupViewer();
+setup3D();
 setupChat();
 loadStatus().catch((err) => { $("#status").innerHTML = `<span class="pill warn">Backend unreachable: ${esc(err.message)}</span>`; });
 loadPatients().catch(() => {});

@@ -77,7 +77,9 @@ A 3D U-Net trained on 1,183 BraTS 2023 glioma scans with all four MRI sequences 
 | Enhancing (active) tumor | **0.86** |
 | Tumor volume error | **6% median** |
 
-For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.90 / 0.80-0.88 on the official BraTS test sets, which differ from ours. It runs in about 30 s per scan on a laptop CPU. For these scans the 3D model, not the 2D classifier, decides whether a tumor is present: the 2D classifier was trained on slices with the skull visible and is unreliable on skull-stripped research volumes. The 3D model was trained on gliomas only, so it reports "brain tumor detected" with its sub-regions and does not claim a tumor type.
+For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.90 / 0.80-0.88 on the official BraTS test sets, which differ from ours. It runs in about 30 s per scan on a laptop CPU. It also works with fewer sequences (held-out Dice: T1ce only 0.91, FLAIR only 0.90, T2 only 0.84), so any 3D volume whose MRI sequence is named (by file name or in the upload form) uses it. For these scans the 3D model, not the 2D classifier, decides whether a tumor is present: the 2D classifier was trained on slices with the skull visible and is unreliable on skull-stripped research volumes. The 3D model was trained on gliomas only, so it reports "brain tumor detected" with its sub-regions and does not claim a tumor type.
+
+![3D view of a held-out BraTS patient: glowing brain shell, necrotic core (red), enhancing tumor (blue), edema (yellow) and the current slice plane](docs/results/3d_view.jpg)
 
 ### Individual models
 

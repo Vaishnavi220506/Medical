@@ -1,4 +1,6 @@
-// 3D tumor viewer: renders marching-cubes meshes from /api/studies/{id}/mesh with three.js.
+// 3D tumor viewer (three.js): glowing "hologram" brain shell, glossy tumor sub-regions,
+// studio lighting, a live slice plane synced with the 2D viewer, cut-away clipping,
+// preset views, auto-rotate and screenshots.
 let viewer = null;
 
 export function disposeViewer() {
@@ -10,36 +12,70 @@ export function disposeViewer() {
   viewer = null;
 }
 
+// Fresnel "x-ray" shader: transparent in the middle, glowing at grazing angles.
+const FRESNEL_VERTEX = `
+  varying vec3 vNormal;
+  varying vec3 vView;
+  #include <clipping_planes_pars_vertex>
+  void main() {
+    vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+    vNormal = normalize(normalMatrix * normal);
+    vView = normalize(-mvPosition.xyz);
+    gl_Position = projectionMatrix * mvPosition;
+    #include <clipping_planes_vertex>
+  }`;
+const FRESNEL_FRAGMENT = `
+  uniform vec3 glowColor;
+  uniform float strength;
+  varying vec3 vNormal;
+  varying vec3 vView;
+  #include <clipping_planes_pars_fragment>
+  void main() {
+    #include <clipping_planes_fragment>
+    float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.2);
+    gl_FragColor = vec4(glowColor, clamp(rim * strength + 0.02, 0.0, 1.0));
+  }`;
+
+// Per sub-region look: edema is translucent so the core inside stays visible.
+const STYLE = {
+  edema: { opacity: 0.38, roughness: 0.5, renderOrder: 3 },
+  enhancing_tumor: { opacity: 0.88, roughness: 0.28, renderOrder: 2 },
+  necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
+};
+
 export async function renderMeshes(container, data) {
   disposeViewer();
   const THREE = await import("three");
   const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
 
   const width = container.clientWidth, height = container.clientHeight;
-  const renderer = new THREE.WebGLRenderer({ antialias: true });
-  renderer.setPixelRatio(window.devicePixelRatio);
+  const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
   renderer.setSize(width, height);
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 1.15;
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.localClippingEnabled = true;
+  renderer.setClearColor(0x000000, 0);
   container.innerHTML = "";
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0x05070d);
-  const camera = new THREE.PerspectiveCamera(40, width / height, 0.1, 5000);
-  scene.add(new THREE.AmbientLight(0xffffff, 0.55));
-  const light = new THREE.DirectionalLight(0xffffff, 1.1);
-  light.position.set(1, 1, 2);
-  scene.add(light);
-  const back = new THREE.DirectionalLight(0xffffff, 0.4);
-  back.position.set(-1, -1, -2);
-  scene.add(back);
+  scene.fog = new THREE.Fog(0x050914, 400, 900);
+  const camera = new THREE.PerspectiveCamera(35, width / height, 1, 5000);
 
-  const group = new THREE.Group();
-  const handles = [];
-  for (const m of data.meshes) {
-    const geometry = new THREE.BufferGeometry();
-    // Vertices come as (slice, row, col) in mm: slice -> superior, row -> posterior,
-    // col -> patient left. Map so the default camera looks at the patient's face:
-    // screen x = patient left, y = superior, z = anterior (towards the viewer).
+  // Studio lighting: soft sky/ground fill, warm key, cool fill, rim light from behind.
+  scene.add(new THREE.HemisphereLight(0xcfe3ff, 0x101426, 0.9));
+  const key = new THREE.DirectionalLight(0xfff1e0, 2.4);
+  key.position.set(1.2, 1.6, 2);
+  const fill = new THREE.DirectionalLight(0x7dd3fc, 0.9);
+  fill.position.set(-2, 0.3, 1);
+  const rim = new THREE.DirectionalLight(0xa78bfa, 1.6);
+  rim.position.set(0, 1, -2.5);
+  scene.add(key, fill, rim);
+
+  // Vertices arrive as (slice, row, col) in mm: map to x = patient left, y = superior, z = anterior.
+  const toGeometry = (m) => {
     const v = m.vertices;
     const pos = new Float32Array(v.length);
     for (let i = 0; i < v.length; i += 3) {
@@ -47,34 +83,111 @@ export async function renderMeshes(container, data) {
       pos[i + 1] = v[i];
       pos[i + 2] = -v[i + 1];
     }
-    geometry.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geometry.setIndex(m.faces);
-    geometry.computeVertexNormals();
-    const material = new THREE.MeshPhongMaterial({
-      color: new THREE.Color(`rgb(${m.color.join(",")})`),
-      transparent: m.opacity < 1,
-      opacity: m.opacity,
-      depthWrite: m.opacity >= 1,
-      side: THREE.DoubleSide,
-      shininess: 40,
-    });
-    const mesh = new THREE.Mesh(geometry, material);
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setIndex(m.faces);
+    g.computeVertexNormals();
+    return g;
+  };
+
+  const group = new THREE.Group();
+  const cutPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e6);
+  const handles = [];
+  for (const m of data.meshes) {
+    const geometry = toGeometry(m);
+    let mesh;
+    if (m.name === "anatomy") {
+      const material = new THREE.ShaderMaterial({
+        uniforms: { glowColor: { value: new THREE.Color(0x67e8f9) }, strength: { value: 1.0 } },
+        vertexShader: FRESNEL_VERTEX,
+        fragmentShader: FRESNEL_FRAGMENT,
+        transparent: true,
+        depthWrite: false,
+        blending: THREE.AdditiveBlending,
+        side: THREE.DoubleSide,
+        clipping: true,
+        clippingPlanes: [cutPlane],
+      });
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = 10;
+    } else {
+      const style = STYLE[m.name] || { opacity: 0.9, roughness: 0.35, renderOrder: 2 };
+      const color = new THREE.Color(`rgb(${m.color.join(",")})`);
+      const material = new THREE.MeshPhysicalMaterial({
+        color,
+        roughness: style.roughness,
+        metalness: 0.05,
+        clearcoat: 0.8,
+        clearcoatRoughness: 0.25,
+        sheen: 0.4,
+        sheenColor: color.clone().offsetHSL(0, 0, 0.2),
+        emissive: color.clone().multiplyScalar(0.12),
+        transparent: style.opacity < 1,
+        opacity: style.opacity,
+        depthWrite: style.opacity >= 1,
+        side: THREE.DoubleSide,
+      });
+      mesh = new THREE.Mesh(geometry, material);
+      mesh.renderOrder = style.renderOrder;
+    }
+    mesh.userData.targetOpacity = mesh.material.opacity ?? 1;
     group.add(mesh);
     handles.push(mesh);
   }
+
   const box = new THREE.Box3().setFromObject(group);
   const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
   group.position.sub(center);
   scene.add(group);
-  const size = box.getSize(new THREE.Vector3()).length();
-  camera.position.set(0, size * 0.15, size * 1.25);
-  camera.lookAt(0, 0, 0);
+  const radius = size.length() / 2;
+
+  // Floor grid that fades into the background.
+  const grid = new THREE.PolarGridHelper(radius * 1.6, 12, 6, 64, 0x1e3a5f, 0x13233d);
+  grid.position.y = -size.y / 2 - radius * 0.08;
+  grid.material.transparent = true;
+  grid.material.opacity = 0.55;
+  scene.add(grid);
+
+  // Slice plane: where the 2D viewer currently is.
+  const sliceMesh = new THREE.Mesh(
+    new THREE.PlaneGeometry(size.x * 1.15, size.z * 1.15),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }),
+  );
+  sliceMesh.rotation.x = -Math.PI / 2;
+  const sliceEdge = new THREE.LineSegments(
+    new THREE.EdgesGeometry(sliceMesh.geometry),
+    new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.8 }),
+  );
+  sliceMesh.add(sliceEdge);
+  sliceMesh.visible = false;
+  scene.add(sliceMesh);
 
   const controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
   controls.autoRotate = true;
-  controls.autoRotateSpeed = 1.2;
-  renderer.domElement.addEventListener("pointerdown", () => { controls.autoRotate = false; });
+  controls.autoRotateSpeed = 0.9;
+  controls.minDistance = radius * 0.6;
+  controls.maxDistance = radius * 6;
+  renderer.domElement.addEventListener("pointerdown", () => { controls.autoRotate = false; viewer?.onAutoRotate?.(false); });
+
+  const views = {
+    front: new THREE.Vector3(0, radius * 0.15, radius * 2.6),
+    side: new THREE.Vector3(radius * 2.6, radius * 0.15, 0),
+    top: new THREE.Vector3(0, radius * 2.6, 0.01),
+    angled: new THREE.Vector3(radius * 1.6, radius * 1.1, radius * 1.9),
+  };
+  let flight = null; // camera animation
+  const flyTo = (target, ms = 900) => {
+    flight = { from: camera.position.clone(), to: target.clone(), start: performance.now(), ms };
+  };
+  camera.position.copy(views.angled).multiplyScalar(1.8);
+  flyTo(views.angled, 1400);
+
+  // Fade the meshes in on open.
+  const born = performance.now();
+  handles.forEach((m) => { if ("opacity" in m.material) { m.material.transparent = true; m.material.opacity = 0; } });
 
   const resize = new ResizeObserver(() => {
     const w = container.clientWidth, h = container.clientHeight;
@@ -85,12 +198,43 @@ export async function renderMeshes(container, data) {
   });
   resize.observe(container);
 
-  viewer = { renderer, container, resize, frame: 0 };
-  const tick = () => {
+  const voxel = data.voxel_mm || data.spacing;
+  viewer = {
+    renderer, container, resize, frame: 0, onAutoRotate: null,
+    setVisible: (i, on) => { handles[i].visible = on; },
+    setAutoRotate: (on) => { controls.autoRotate = on; },
+    view: (name) => { controls.autoRotate = false; viewer.onAutoRotate?.(false); flyTo(views[name]); },
+    setCut: (fraction) => {
+      // fraction 0 = no cut, 1 = everything removed (cut from the patient's left side).
+      cutPlane.constant = fraction <= 0 ? 1e6 : (0.5 - fraction) * size.x;
+    },
+    setSlice: (index) => {
+      if (index == null) { sliceMesh.visible = false; return; }
+      sliceMesh.visible = true;
+      sliceMesh.position.set(0, index * voxel[0] - center.y, 0);
+    },
+    screenshot: () => renderer.domElement.toDataURL("image/png"),
+  };
+
+  const tick = (now) => {
+    if (flight) {
+      const t = Math.min(1, (now - flight.start) / flight.ms);
+      const ease = 1 - Math.pow(1 - t, 3);
+      camera.position.lerpVectors(flight.from, flight.to, ease);
+      if (t >= 1) flight = null;
+    }
+    const fade = Math.min(1, (now - born) / 900);
+    if (fade < 1 || handles[0]?.material.opacity === 0) {
+      handles.forEach((m) => {
+        if (m.material.uniforms) m.material.uniforms.strength.value = 1.0 * fade;
+        else m.material.opacity = m.userData.targetOpacity * fade;
+        if (fade >= 1 && !m.material.uniforms) m.material.transparent = m.userData.targetOpacity < 1;
+      });
+    }
     controls.update();
     renderer.render(scene, camera);
     viewer.frame = requestAnimationFrame(tick);
   };
-  tick();
-  return handles;
+  viewer.frame = requestAnimationFrame(tick);
+  return viewer;
 }

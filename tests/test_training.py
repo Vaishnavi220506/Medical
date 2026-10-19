@@ -171,4 +171,6 @@ def test_3d_segmenter_training_and_inference(isolated, demo, tmp_path, monkeypat
     # For 3D volumes the 3D model decides tumor presence (the 2D classifier is not used).
     assert study["classification"]["label"] in ("tumor", "no_tumor")
     single = analyze([("x_t1ce.nii.gz", files[2][1], "t1ce")], "brain_mri", "Case-3D")
-    assert single["segmentation"]["model"] != "3d"  # needs 2+ sequences
+    assert single["segmentation"]["model"] == "3d"  # one named sequence is enough
+    unlabeled = analyze([("scan.nii.gz", files[2][1], None)], "brain_mri", "Case-3D")
+    assert unlabeled["segmentation"]["model"] != "3d"  # unknown sequence -> 2D model

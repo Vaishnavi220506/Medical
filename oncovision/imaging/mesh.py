@@ -12,11 +12,11 @@ from .preprocess import foreground_mask, normalize
 MAX_DIM = 128  # downsample large volumes so meshes stay light in the browser
 
 
-def _surface(mask: np.ndarray, spacing, step: int = 1) -> dict | None:
+def _surface(mask: np.ndarray, spacing, step: int = 1, sigma: float = 1.0) -> dict | None:
     if mask.sum() < 8:
         return None
     padded = np.pad(mask.astype(np.float32), 1)
-    padded = ndimage.gaussian_filter(padded, 0.8)
+    padded = ndimage.gaussian_filter(padded, sigma)  # smooth, organic-looking surfaces
     try:
         verts, faces, _, _ = marching_cubes(padded, level=0.5, spacing=spacing, step_size=step)
     except (ValueError, RuntimeError):
@@ -34,8 +34,8 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
     sp = tuple(s * factor for s in spacing)
 
     body = np.stack([foreground_mask(s) for s in vol])
-    out: dict = {"spacing": sp, "shape": list(vol.shape), "meshes": []}
-    surface = _surface(body, sp, step=2)
+    out: dict = {"spacing": sp, "voxel_mm": list(spacing), "shape": list(volume.shape), "meshes": []}
+    surface = _surface(ndimage.binary_fill_holes(body), sp, step=2, sigma=1.6)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
     for lbl in profile.display_labels:
