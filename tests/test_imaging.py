@@ -107,3 +107,25 @@ def test_ct_window_applies_only_to_hounsfield_data():
     png = Scan(channels={"image": np.array([[[0.0, 255.0]]])}, spacing=None, source_format="image")
     apply_window(png, get_profile("lung_ct"))
     assert png.channels["image"].tolist() == [[[0.0, 255.0]]]
+
+
+def test_pseudo_3d_inflation():
+    import numpy as np
+
+    from oncovision.imaging.mesh import _inflate, build_pseudo_meshes
+    from oncovision.models.registry import PROFILES
+
+    yy, xx = np.mgrid[:128, :128]
+    big = (yy - 60) ** 2 + (xx - 40) ** 2 <= 30**2
+    small = (yy - 60) ** 2 + (xx - 105) ** 2 <= 5**2
+    vol = _inflate(big | small, 80)
+    # A disk becomes a ball: depth ~ diameter. The small disk stays small.
+    assert abs(vol[:, 60, 40].sum() - 60) <= 2
+    assert vol[:, 60, 105].sum() <= 12
+
+    img = np.zeros((1, 128, 128), np.float32)
+    img[0][(yy - 64) ** 2 + (xx - 64) ** 2 <= 55**2] = 0.5
+    lab = np.zeros((1, 128, 128), np.uint8)
+    lab[0][(yy - 64) ** 2 + (xx - 64) ** 2 <= 15**2] = 4
+    out = build_pseudo_meshes(img, lab, PROFILES["brain_mri"], (1.0, 0.5, 0.5))
+    assert out["pseudo"] and [m["name"] for m in out["meshes"]] == ["anatomy", "tumor"]

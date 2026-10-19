@@ -70,7 +70,10 @@ def test_2d_upload_and_errors(client, demo_dir):
     assert res.status_code == 200
     study = res.json()
     assert study["scan"]["is_volume"] is False
-    assert client.get(f"/api/studies/{study['id']}/mesh").status_code == 400
+    # A single image gets a pseudo-3D preview, clearly marked, with no volumes.
+    mesh = client.get(f"/api/studies/{study['id']}/mesh").json()
+    assert mesh["pseudo"] is True and mesh["warning"]
+    assert mesh["meshes"][0]["name"] == "anatomy" and all("volume_ml" not in m for m in mesh["meshes"])
 
     bad = client.post("/api/analyze", files=[("files", ("x.png", b"not an image", "image/png"))])
     assert bad.status_code == 422

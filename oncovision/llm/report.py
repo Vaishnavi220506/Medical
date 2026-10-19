@@ -86,6 +86,27 @@ def _template_narrative(study: dict, comparison: dict | None, audience: str) -> 
     return {"findings": findings, "comparison": comp, "impression": cls["display"], "recommendations": recs, "generated_by": "template"}
 
 
+def _ollama_narrative(study: dict, comparison: dict | None, audience: str, prompt: str, png: bytes) -> dict:
+    """Report text from a local Ollama model, constrained to the narrative JSON schema."""
+    try:
+        import ollama
+
+        message = {"role": "user", "content": prompt}
+        if settings.ollama_vision:
+            message["images"] = [base64.b64encode(png).decode()]
+        response = ollama.Client(host=settings.ollama_host).chat(
+            model=settings.ollama_model, messages=[message], format=NARRATIVE_SCHEMA, options={"temperature": 0.2}
+        )
+        data = json.loads(response.message.content)
+        if not isinstance(data, dict) or any(key not in data for key in NARRATIVE_SCHEMA["required"]):
+            raise ValueError("incomplete narrative")
+        data["generated_by"] = "llm"
+        return data
+    except Exception as exc:  # any Ollama problem (not installed, not running, bad JSON): use the template
+        log.warning("Falling back to template report narrative: %s", exc)
+        return _template_narrative(study, comparison, audience)
+
+
 def narrative(store: Store, study: dict, comparison: dict | None, audience: str) -> dict:
     kind, style = STYLES[audience]
     ctx = ToolContext(store=store, study=study)
@@ -93,6 +114,8 @@ def narrative(store: Store, study: dict, comparison: dict | None, audience: str)
     prompt = REPORT_PROMPT.format(
         kind=kind, style=style, findings=findings_text(study), comparison=json.dumps(comparison, indent=1) if comparison else "None"
     )
+    if settings.llm_provider == "ollama":
+        return _ollama_narrative(study, comparison, audience, prompt, png)
     try:
         response = anthropic.Anthropic().beta.messages.create(
             model=settings.llm_model,

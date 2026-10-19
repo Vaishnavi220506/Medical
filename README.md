@@ -39,14 +39,30 @@ python -m venv .venv
 # Windows: .venv\Scripts\activate      macOS/Linux: source .venv/bin/activate
 pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu   # or the CUDA build with an NVIDIA GPU
 pip install -r requirements.txt
-cp .env.example .env               # add ANTHROPIC_API_KEY (optional)
+cp .env.example .env               # choose an LLM provider in .env (optional)
 uvicorn oncovision.api.main:app
 ```
 
 Or `docker compose up --build`.
+
+### LLM providers
+
+The assistant supports both Claude and local Ollama. Each contributor can choose independently in `.env`:
+
+```env
+# Cloud Claude (requires ANTHROPIC_API_KEY)
+ONCOVISION_LLM_PROVIDER=anthropic
+
+# Or free/local Ollama (requires Ollama plus the model installed locally)
+ONCOVISION_LLM_PROVIDER=ollama
+ONCOVISION_OLLAMA_MODEL=llama3.2:3b
+ONCOVISION_OLLAMA_VISION=false
+```
+
+For Ollama, install the model once with `ollama pull llama3.2:3b` and keep the Ollama app running. The model must support tool calling (llama3.2, qwen2.5 and mistral do). Text-only models work from the written scan findings; set `ONCOVISION_OLLAMA_VISION=true` only for a vision model that also supports tools (for example `qwen2.5vl`), and it will also see the scan images. Both the chat and the PDF report text use the chosen provider; if the LLM is unavailable, the report falls back to a fixed template. Small local models are much weaker than Claude at medical explanations, so check their answers. The rest of the app works regardless of provider.
 </details>
 
-**Try it:** upload any brain MRI or breast ultrasound image (JPG, PNG, DICOM or NIfTI). For real **3D brain MRI**, use the scans in [`samples/brain_mri_3d/`](samples/README.md): drag the four files of one patient in together, then open the **3D** tab. For a 3D and over-time demo, run `python scripts/make_demo_data.py`, upload the four `demo_data/brain_t0_*.nii.gz` files together with patient label `Demo-001`, then the `brain_t1_*` files with the same label and a later date. Those are synthetic phantoms, which the brain models were not trained on, so treat their results as a software demo only.
+**Try it:** upload any brain MRI or breast ultrasound image (JPG, PNG, DICOM or NIfTI). For real **3D brain MRI**, use the scans in [`samples/brain_mri_3d/`](samples/README.md): drag the four files of one patient in together, then open the **3D** tab. A single 2D image also gets an *estimated* 3D preview in the 3D tab: its depth is guessed from the outline, so it is marked as a preview and shows no volumes. For a 3D and over-time demo, run `python scripts/make_demo_data.py`, upload the four `demo_data/brain_t0_*.nii.gz` files together with patient label `Demo-001`, then the `brain_t1_*` files with the same label and a later date. Those are synthetic phantoms, which the brain models were not trained on, so treat their results as a software demo only.
 
 ---
 

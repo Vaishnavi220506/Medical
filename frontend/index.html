@@ -171,11 +171,12 @@
                 <button type="button" class="btn small" id="three-full" title="Fullscreen">⛶</button>
               </div>
               <div class="three-hud three-bottom">
-                <label>Cut away brain <input type="range" id="three-cut" min="0" max="0.95" step="0.01" value="0"></label>
+                <label><span id="three-cut-label">Cut away brain</span> <input type="range" id="three-cut" min="0" max="0.95" step="0.01" value="0"></label>
                 <label class="check"><input type="checkbox" id="three-slice" checked> Show current slice</label>
                 <span class="hint">Drag to rotate · scroll to zoom · right-drag to move</span>
               </div>
               <p class="three-msg" id="three-msg"></p>
+              <div class="three-hud three-warning" id="three-warning" hidden></div>
             </div>
           </div>
         </section>

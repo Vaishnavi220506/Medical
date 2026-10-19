@@ -154,6 +154,8 @@ tr:last-child td { border-bottom: none; }
 .three-msg { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; margin: 0;
   color: var(--muted); pointer-events: none; z-index: 1; text-align: center; padding: 20px; }
 .three-msg:empty { display: none; }
+.three-warning { left: 50%; transform: translateX(-50%); bottom: 64px; max-width: min(560px, 90%); padding: 8px 14px; border-radius: 10px;
+  background: rgba(120, 53, 15, .75); border: 1px solid #b45309; color: #fde68a; font-size: 12.5px; text-align: center; backdrop-filter: blur(6px); }
 .three-card:fullscreen .three-stage { height: 100vh; border-radius: 0; }
 @media (max-width: 860px) { .three-stage { height: 460px; } .three-bottom .hint { display: none; } }
 .toggles { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; }

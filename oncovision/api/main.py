@@ -20,7 +20,7 @@ from ..analysis.longitudinal import compare, timeline
 from ..analysis.pipeline import UnsupportedScanError, analyze, get_engine, get_store
 from ..config import settings
 from ..imaging.io import ScanLoadError, anonymize_dicom
-from ..imaging.mesh import build_meshes
+from ..imaging.mesh import build_meshes, build_pseudo_meshes
 from ..imaging.render import LAYERS, render_layer, to_png
 from ..llm import assistant, report
 from ..llm.tools import ToolContext, slice_panel
@@ -47,7 +47,8 @@ def health():
         "version": __version__,
         "demo_mode": engine.demo_mode,
         "llm_configured": settings.llm_enabled,
-        "llm_model": settings.llm_model,
+        "llm_provider": settings.llm_provider,
+        "llm_model": settings.ollama_model if settings.llm_provider == "ollama" else settings.llm_model,
         "models": engine.status(),
     }
 
@@ -166,14 +167,16 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    if not s["scan"]["is_volume"]:
-        raise HTTPException(400, "3D view needs a volumetric scan (NIfTI or a DICOM series).")
-    cache = settings.data_dir / "studies" / sid / "mesh_v2.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v4.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
     base = next(v for k, v in arrays.items() if k.startswith("ch_"))
-    data = build_meshes(base, arrays["labels"], get_profile(s["profile"]["key"]), s["scan"]["spacing_mm"])
+    data = (
+        build_meshes(base, arrays["labels"], get_profile(s["profile"]["key"]), s["scan"]["spacing_mm"])
+        if s["scan"]["is_volume"]
+        else build_pseudo_meshes(base, arrays["labels"], get_profile(s["profile"]["key"]), s["scan"]["spacing_mm"])
+    )
     text = json.dumps(data)
     cache.write_text(text)
     return Response(text, media_type="application/json")

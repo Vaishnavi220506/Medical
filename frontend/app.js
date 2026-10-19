@@ -395,25 +395,28 @@ async function load3D() {
   const msg = $("#three-msg");
   $("#mesh-toggles").innerHTML = "";
   viewer3d = null;
-  if (!s.scan.is_volume) {
-    msg.textContent = "The 3D view needs a 3D scan (a NIfTI file or a DICOM series). This study is a single 2D image.";
-    $("#three-container").innerHTML = "";
-    return;
-  }
+  $("#three-warning").hidden = true;
   msg.textContent = "Building 3D surfaces…";
   try {
     const data = await api(`/api/studies/${s.id}/mesh`);
     viewer3d = await renderMeshes($("#three-container"), data);
     viewer3d.onAutoRotate = (on) => $("#three-rotate").classList.toggle("active", on);
     msg.textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
-    const volumes = Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
+    if (data.pseudo) {
+      // Estimated shape from a single 2D image: say so clearly and show no volumes.
+      $("#three-warning").textContent = `Preview only. ${data.warning}`;
+      $("#three-warning").hidden = false;
+    }
+    const volumes = data.pseudo ? {} : Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
     $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
       const color = m.name === "anatomy" ? "103,232,249" : m.color.join(",");
-      const label = m.name === "anatomy" ? "Brain / head" : m.description || m.name;
+      const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
       return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
     }).join("");
-    viewer3d.setSlice($("#three-slice").checked ? state.slice : null);
+    $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : "Cut away brain";
+    $("#three-slice").disabled = !!data.pseudo;
+    viewer3d.setSlice($("#three-slice").checked && !data.pseudo ? state.slice : null);
     viewer3d.setCut(+$("#three-cut").value);
   } catch (err) {
     const offline = /import|module|fetch/i.test(err.message);

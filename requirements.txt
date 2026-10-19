@@ -15,6 +15,7 @@ nibabel>=5.2
 torch>=2.2
 torchvision>=0.17
 anthropic>=1.15
+ollama>=0.6
 
 # Reports
 fpdf2>=2.7.9
