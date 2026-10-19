@@ -4,10 +4,10 @@
     "rejected_as_unsupported": 0,
     "routing_accuracy": 1.0,
     "classification_accuracy_when_routed": 0.95,
-    "tumor_outlined_rate": 0.553,
+    "tumor_outlined_rate": 0.557,
     "normal_false_outline_rate": 0.01,
-    "flagged_for_review_rate": 0.455,
-    "seconds_per_scan": 1.29,
+    "flagged_for_review_rate": 0.453,
+    "seconds_per_scan": 0.55,
     "confusion": {
       "glioma -> glioma": 84,
       "glioma -> meningioma": 12,
@@ -26,18 +26,17 @@
     "classification_accuracy_when_routed": 0.846,
     "tumor_outlined_rate": 0.918,
     "normal_false_outline_rate": 0.2,
-    "flagged_for_review_rate": 0.282,
-    "seconds_per_scan": 0.76,
+    "flagged_for_review_rate": 0.299,
+    "seconds_per_scan": 0.69,
     "confusion": {
-      "benign -> benign": 56,
+      "benign -> benign": 55,
       "benign -> malignant": 8,
-      "benign -> normal": 2,
+      "benign -> normal": 3,
       "malignant -> benign": 4,
       "malignant -> malignant": 26,
       "malignant -> normal": 1,
       "normal -> benign": 2,
-      "normal -> malignant": 1,
-      "normal -> normal": 17
+      "normal -> normal": 18
     }
   },
   "lung_ct": {
@@ -63,7 +62,7 @@
     "tumor_outlined_rate": null,
     "normal_false_outline_rate": null,
     "flagged_for_review_rate": null,
-    "seconds_per_scan": 0.09,
+    "seconds_per_scan": 0.08,
     "confusion": {
       "other -> rejected": 120
     }
