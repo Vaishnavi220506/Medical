@@ -64,7 +64,7 @@ def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_unc
         reasons.append("Demo mode: at least one step used the heuristic detector instead of a trained model.")
     if cls.confidence < settings.min_confidence or (cls.mc_std or 0.0) > settings.max_mc_std:
         reasons.append(f"Classifier is unsure (confidence {cls.confidence:.0%}).")
-    if lesion_uncertainty > settings.review_threshold:
+    if lesion_uncertainty > (settings.review_threshold or profile.review_uncertainty):
         reasons.append(f"Tumor boundary is uncertain (mean uncertainty {lesion_uncertainty:.2f}).")
     detected = measurements.get("detected", False)
     says_normal = cls.label == profile.normal_class

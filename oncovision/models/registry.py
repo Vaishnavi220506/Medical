@@ -44,6 +44,9 @@ class CancerProfile:
     # CT display window in Hounsfield units, applied to DICOM/NIfTI CT before normalization.
     intensity_window: tuple[float, float] | None = None
     reporting_system: str = ""
+    # Mean boundary uncertainty that triggers expert review. Set to roughly the top
+    # 20% of outlines on held-out scans (ultrasound lesion edges are fuzzier than MRI).
+    review_uncertainty: float = 0.5
     datasets: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -107,6 +110,7 @@ PROFILES: dict[str, CancerProfile] = {
         normal_class="normal",
         seg_labels=(SegLabel(1, "lesion", (236, 72, 153), "Breast lesion"),),
         lesion_polarity="dark",
+        review_uncertainty=0.7,
         reporting_system="BI-RADS (Breast Imaging Reporting and Data System)",
         datasets=("BUSI - Breast Ultrasound Images Dataset",),
     ),
