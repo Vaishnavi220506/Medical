@@ -109,10 +109,10 @@ def test_hover_explanations(client, demo_dir):
     assert mesh["organ"] == "brain" and mesh["slice_plane"] and mesh["parts"]["edema"]["effect"]
 
 
-def test_pseudo_3d_shape_and_image_plane(client, demo_dir):
+def test_pseudo_3d_shape(client, demo_dir):
     res = client.post("/api/analyze", files=[("files", ("us.png", (demo_dir / "breast_us.png").read_bytes(), "image/png"))], data={"scan_type": "breast_us"})
     mesh = client.get(f"/api/studies/{res.json()['id']}/mesh").json()
     names = [m["name"] for m in mesh["meshes"]]
-    assert mesh["pseudo"] and mesh["image_plane"]["size"][0] > 0
+    assert mesh["pseudo"] and mesh["image_factor"] >= 1
     if "lesion" in names:
         assert "possible_extent" in names and mesh["depth_ratio"]["median"] < mesh["depth_ratio"]["p90"]

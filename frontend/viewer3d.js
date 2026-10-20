@@ -43,8 +43,7 @@ const STYLE = {
   necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
 };
 
-// opts.sliceUrl(i): image of axial slice i (3D scans); opts.imageUrl: the uploaded image (2D -> 3D preview).
-export async function renderMeshes(container, data, opts = {}) {
+export async function renderMeshes(container, data) {
   disposeViewer();
   const THREE = await import("three");
   const { OrbitControls } = await import("three/addons/controls/OrbitControls.js");
@@ -137,35 +136,6 @@ export async function renderMeshes(container, data, opts = {}) {
     handles.push(mesh);
   }
 
-  // Scan images in 3D: glowing "light-box" planes (additive blending makes the black background vanish).
-  const loader = new THREE.TextureLoader();
-  // Colour is added; alpha is left alone, so the (transparent) canvas does not turn opaque black
-  // where the image is dark.
-  const imageMaterial = (opacity) => new THREE.MeshBasicMaterial({
-    transparent: true, opacity, side: THREE.DoubleSide, depthWrite: false,
-    blending: THREE.CustomBlending, blendEquation: THREE.AddEquation,
-    blendSrc: THREE.SrcAlphaFactor, blendDst: THREE.OneFactor,
-    blendSrcAlpha: THREE.ZeroFactor, blendDstAlpha: THREE.OneFactor,
-  });
-  const loadInto = (material, url) => loader.load(url, (tex) => {
-    tex.colorSpace = THREE.SRGBColorSpace;
-    material.map?.dispose();
-    material.map = tex;
-    material.needsUpdate = true;
-  });
-  let imagePlane = null;
-  if (data.image_plane && opts.imageUrl) {
-    // 2D -> 3D preview: the uploaded image stands in the middle of the estimated volume.
-    const [w, h] = data.image_plane.size;
-    imagePlane = new THREE.Mesh(new THREE.PlaneGeometry(w, h), imageMaterial(0.5));
-    imagePlane.position.set(...data.image_plane.center);
-    imagePlane.renderOrder = 0; // drawn before the tumor, so the tumor keeps its colour
-    imagePlane.userData = { name: "image", targetOpacity: 0.5 };
-    loadInto(imagePlane.material, opts.imageUrl);
-    group.add(imagePlane);
-    handles.push(imagePlane);
-  }
-
   const box = new THREE.Box3().setFromObject(group);
   const center = box.getCenter(new THREE.Vector3());
   const size = box.getSize(new THREE.Vector3());
@@ -180,13 +150,13 @@ export async function renderMeshes(container, data, opts = {}) {
   grid.material.opacity = 0.55;
   scene.add(grid);
 
-  // Slice plane: where the 2D viewer currently is, showing that slice's image (3D scans).
+  // Slice plane: where the 2D viewer currently is (a light outline, no image).
   const planeSize = data.slice_plane?.size || [size.x, size.z];
   const sliceMesh = new THREE.Mesh(
     new THREE.PlaneGeometry(planeSize[0], planeSize[1]),
-    opts.sliceUrl ? imageMaterial(0.9) : new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.14, side: THREE.DoubleSide, depthWrite: false }),
+    new THREE.MeshBasicMaterial({ color: 0x38bdf8, transparent: true, opacity: 0.1, side: THREE.DoubleSide, depthWrite: false }),
   );
-  sliceMesh.rotation.x = Math.PI / 2; // image top (row 0, anterior) towards +z
+  sliceMesh.rotation.x = Math.PI / 2;
   const sliceEdge = new THREE.LineSegments(
     new THREE.EdgesGeometry(sliceMesh.geometry),
     new THREE.LineBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.8 }),
@@ -246,10 +216,6 @@ export async function renderMeshes(container, data, opts = {}) {
       sliceMesh.visible = true;
       const [cx, cz] = data.slice_plane?.center_xz || [center.x, center.z];
       sliceMesh.position.set(cx, index * voxel[0], cz);
-      if (opts.sliceUrl && sliceMesh.userData.index !== index) {
-        sliceMesh.userData.index = index;
-        loadInto(sliceMesh.material, opts.sliceUrl(index));
-      }
     },
     onHover: null, // ({name, point, dir, clientX, clientY}) in data coordinates (mm), or null
     screenshot: () => renderer.domElement.toDataURL("image/png"),
@@ -283,7 +249,7 @@ export async function renderMeshes(container, data, opts = {}) {
   const pick = () => {
     if (!pointer || pointer.buttons) return;
     raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObjects(handles.filter((h) => h.visible && h.userData.name !== "image"), false)
+    const hits = raycaster.intersectObjects(handles.filter((h) => h.visible), false)
       .filter((h) => h.object.userData.name !== "anatomy" || cutPlane.distanceToPoint(h.point) >= 0)
       .sort((a, b) => rank(a.object.userData.name) - rank(b.object.userData.name) || a.distance - b.distance);
     const hit = hits[0];

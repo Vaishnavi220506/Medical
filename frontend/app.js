@@ -422,11 +422,7 @@ async function load3D() {
   msg.textContent = "Building 3D surfaces…";
   try {
     const data = await api(`/api/studies/${s.id}/mesh`);
-    const slice = (i, layer) => `/api/studies/${s.id}/slice/${i}.png?layer=${layer}`;
-    viewer3d = await renderMeshes($("#three-container"), data, {
-      sliceUrl: data.pseudo ? null : (i) => slice(i, "overlay"),
-      imageUrl: data.pseudo ? slice(0, "original") : null,
-    });
+    viewer3d = await renderMeshes($("#three-container"), data);
     viewer3d.onHover = (hit) => explain3D(s, data, hit);
     viewer3d.onAutoRotate = (on) => $("#three-rotate").classList.toggle("active", on);
     msg.textContent = data.meshes.length > 1 ? "" : "No tumor surface to show.";
@@ -441,8 +437,7 @@ async function load3D() {
       const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
       return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
-    }).join("") + (data.pseudo && data.image_plane
-      ? `<label class="legend-chip"><input type="checkbox" data-mesh="${data.meshes.length}" checked><span class="dot" style="background:#e2e8f0;color:#e2e8f0"></span>Your scan image</label>` : "");
+    }).join("");
     $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : `Cut away ${(data.anatomy_label || "brain").split(" ")[0].toLowerCase()}`;
     $("#three-slice").disabled = !!data.pseudo;
     viewer3d.setSlice($("#three-slice").checked && !data.pseudo ? state.slice : null);

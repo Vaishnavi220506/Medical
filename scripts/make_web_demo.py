@@ -4,7 +4,6 @@ The demo page uses the app's own 3D viewer (frontend/viewer3d.js) and works with
 server, so it can be hosted on GitHub Pages. It needs:
 
 * mesh.json        the study's 3D surfaces, exactly as the app's /mesh endpoint returns them
-* slices/<i>.png   the overlay image of each axial slice (for the slice plane)
 * hover.json       explanations precomputed on a coarse grid (the app asks the server instead)
 
 Usage:
@@ -37,16 +36,13 @@ def main() -> None:
     args = parser.parse_args()
     client = TestClient(app)
     study = client.get(f"/api/studies/{args.study}").json()
-    (args.out / "slices").mkdir(parents=True, exist_ok=True)
+    args.out.mkdir(parents=True, exist_ok=True)
 
     mesh = client.get(f"/api/studies/{args.study}/mesh").json()
     mesh["study"] = {k: study[k] for k in ("classification", "measurements", "profile", "scan")}
     (args.out / "mesh.json").write_text(json.dumps(mesh, separators=(",", ":")))
 
     z, h, w = study["scan"]["shape"]
-    for i in range(z):
-        png = client.get(f"/api/studies/{args.study}/slice/{i}.png", params={"layer": "overlay"}).content
-        (args.out / "slices" / f"{i}.png").write_bytes(png)
 
     # Hover lookup: on a coarse grid, the index of the explanation (titles + texts stored once)
     # and the distance to the tumor. The page fills in the distance sentence itself.
@@ -75,7 +71,7 @@ def main() -> None:
         "function": {t["title"]: t.get("what", "") for t in texts if t.get("kind") == "area"},
     }
     (args.out / "hover.json").write_text(json.dumps(hover, separators=(",", ":")))
-    print(f"demo data in {args.out}: {z} slices, {len(texts) - 1} explanations, grid {shape}")
+    print(f"demo data in {args.out}: {len(texts) - 1} explanations, grid {shape}")
 
 
 if __name__ == "__main__":

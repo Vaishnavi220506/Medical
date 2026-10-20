@@ -19,8 +19,7 @@
     .demo .lead { color: var(--muted); margin: 0 0 18px; line-height: 1.55; max-width: 860px; }
     .demo .lead a { color: #7dd3fc; }
     .three-stage { height: min(72vh, 680px); }
-    .slice-row { display: flex; align-items: center; gap: 12px; padding: 12px 16px 14px; color: var(--muted); }
-    .slice-row input { flex: 1; }
+
     .facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 16px; }
     .facts div { background: var(--panel, #111a2e); border: 1px solid var(--border, #1f2a44); border-radius: 12px; padding: 12px 14px; }
     .facts b { display: block; font-size: 18px; margin-top: 2px; }
@@ -32,8 +31,7 @@
   <main class="demo">
     <h1>OncoVision: interactive 3D tumor view</h1>
     <p class="lead">A real glioma patient from the BraTS 2023 data that OncoVision's 3D model never saw in training, outlined by the model from four MRI sequences.
-      <b>Drag</b> to rotate, <b>scroll</b> to zoom, and <b>hover</b> over the brain or the tumor: each part explains what it is, what that area of the brain does, and how the tumor affects it.
-      Use the slider below to move through the real MRI slices. <a href="https://github.com/Vaishnavi220506/Medical/tree/vaishnavi/optimistic-noether-034odi">Source code</a></p>
+      <b>Drag</b> to rotate, <b>scroll</b> to zoom, and <b>hover</b> over the brain or the tumor: each part explains what it is, what that area of the brain does, and how the tumor affects it. <a href="https://github.com/Vaishnavi220506/Medical/tree/vaishnavi/optimistic-noether-034odi">Source code</a></p>
 
     <div class="card three-card" id="three-card">
       <div class="three-stage">
@@ -56,7 +54,6 @@
         </div>
         <p class="three-msg" id="three-msg">Loading the 3D model…</p>
       </div>
-      <div class="slice-row"><span>MRI slice</span><input type="range" id="slice" min="0" value="0"><span id="slice-label"></span></div>
     </div>
 
     <div class="facts" id="facts"></div>
@@ -72,7 +69,7 @@
     const [data, hover] = await Promise.all([fetch("assets/mesh.json").then((r) => r.json()), fetch("assets/hover.json").then((r) => r.json())]);
     const index = Uint8Array.from(atob(hover.index), (c) => c.charCodeAt(0));
     const dist = Uint8Array.from(atob(hover.distance), (c) => c.charCodeAt(0));
-    const viewer = await renderMeshes($("#three-container"), data, { sliceUrl: (i) => `assets/slices/${i}.png` });
+    const viewer = await renderMeshes($("#three-container"), data);
     $("#three-msg").textContent = "";
 
     // Legend chips toggle the parts.
@@ -93,15 +90,6 @@
     $("#three-rotate").addEventListener("click", (e) => { const on = !e.currentTarget.classList.contains("active"); e.currentTarget.classList.toggle("active", on); viewer.setAutoRotate(on); });
     $("#three-cut").addEventListener("input", (e) => viewer.setCut(+e.target.value));
     $("#three-full").addEventListener("click", () => document.fullscreenElement ? document.exitFullscreen() : $("#three-card").requestFullscreen?.());
-
-    // Slice plane follows the slider; start at the slice where the tumor is largest.
-    const nz = data.shape[0];
-    const slider = $("#slice");
-    slider.max = nz - 1;
-    slider.value = data.study.measurements.key_slice ?? Math.floor(nz / 2);
-    const showSlice = () => { viewer.setSlice(+slider.value); $("#slice-label").textContent = `${+slider.value + 1} / ${nz}`; };
-    slider.addEventListener("input", showSlice);
-    showSlice();
 
     // Hover: tumor parts use the mesh's own texts; brain areas use the precomputed grid.
     const card = $("#hover-3d");

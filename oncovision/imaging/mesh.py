@@ -126,9 +126,6 @@ def build_pseudo_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerP
         "organ": profile.organ, "modality": profile.modality, "units": "mm" if spacing else "px",
         "depth_ratio": {"median": median, "p90": high},
         "image_factor": factor,  # mesh grid = uploaded image downsampled by this factor
-        # The uploaded image as a picture plane through the middle of the estimated volume
-        # (viewer coordinates: x = column, y = up, z = -depth).
-        "image_plane": {"center": [(w - 1) / 2 * pixel, (h - 1) / 2 * pixel, -(depth - 1) / 2 * pixel], "size": [w * pixel, h * pixel]},
     }
 
     def upright(vol3d):
