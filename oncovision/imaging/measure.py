@@ -129,7 +129,7 @@ def measure(
         offset = (cx - midline) * dx
         location: dict = {}
         # Breast MRI showing only one breast (many ISPY scans): its centre is not the body's midline.
-        one_breast = profile.organ == "breast" and profile.modality == "MRI" and labels.shape[2] * dx < ONE_BREAST_FOV_MM
+        one_breast = bool(spacing) and profile.organ == "breast" and profile.modality == "MRI" and labels.shape[2] * dx < ONE_BREAST_FOV_MM
         if one_breast:
             location["field_of_view"] = "one breast only (left or right cannot be told from this scan)"
         elif profile.modality != "Ultrasound":  # an ultrasound image has no patient midline

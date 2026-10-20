@@ -18,10 +18,12 @@ else
   pip install -q -r requirements.txt
 fi
 # NVIDIA GPU but PyTorch cannot use it: install the CUDA 12.8 build (new cards), else CUDA 12.6.
-if command -v nvidia-smi >/dev/null 2>&1 && ! python scripts/check_gpu.py; then
+# Tried once; delete .venv/gpu_setup_tried to try again (e.g. after a driver update).
+if command -v nvidia-smi >/dev/null 2>&1 && [ ! -f .venv/gpu_setup_tried ] && ! python scripts/check_gpu.py; then
   echo "Installing the GPU version of PyTorch for your NVIDIA card (about 3 GB, only once)..."
-  pip install --upgrade --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128
-  python scripts/check_gpu.py || pip install --upgrade --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126
+  pip install --upgrade --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu128 || true
+  python scripts/check_gpu.py || pip install --upgrade --force-reinstall torch torchvision --index-url https://download.pytorch.org/whl/cu126 || true
+  touch .venv/gpu_setup_tried
 fi
 python -c "import torch; print('AI models will run on:', torch.cuda.get_device_name(0) if torch.cuda.is_available() else ('Apple GPU' if torch.backends.mps.is_available() else 'CPU'))"
 [ -f .env ] || cp .env.example .env

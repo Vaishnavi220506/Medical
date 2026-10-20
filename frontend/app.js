@@ -453,12 +453,14 @@ async function load3D() {
 
 // ------------------------------------------------------------------ hover explanations
 // One request in flight at a time; the newest pointer position wins.
-const probeState = { busy: false, next: null };
+// hideCard bumps `gen`, so an answer that arrives after the pointer has left is dropped.
+const probeState = { busy: false, next: null, gen: 0 };
 async function probe(id, slice, row, col, done) {
   // Same spot as the last answer: reuse it instead of asking again.
   const key = `${id}:${JSON.stringify(slice)}:${row}:${col}`;
   if (probeState.lastKey === key && probeState.last) { done(probeState.last); return; }
-  probeState.next = { id, slice, row, col, done, key };
+  const gen = probeState.gen;
+  probeState.next = { id, slice, row, col, done: (info) => { if (gen === probeState.gen) done(info); }, key };
   if (probeState.busy) return;
   probeState.busy = true;
   while (probeState.next) {
@@ -493,6 +495,8 @@ function showCard(sel, info, e, host) {
 }
 
 function hideCard(sel) {
+  probeState.gen += 1;
+  probeState.next = null;
   const card = $(sel);
   if (card) card.hidden = true;
 }

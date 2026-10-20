@@ -74,7 +74,7 @@ BREAST_QUADRANTS = {
 }
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)  # a couple of studies; large CT arrays are hundreds of MB each
 def _context(sid: str, version: str):
     """Arrays and derived maps for one study, cached across hover requests."""
     from .pipeline import get_store  # late import: pipeline imports this module's users
@@ -85,7 +85,7 @@ def _context(sid: str, version: str):
     return arrays, base, labels
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)  # a couple of studies; large CT arrays are hundreds of MB each
 def _distance_map(sid: str, version: str, spacing: tuple[float, float, float] | None):
     """Distance (mm or px) from every voxel to the nearest tumor voxel, at up to 256 px in-plane."""
     _, _, labels = _context(sid, version)
@@ -102,7 +102,7 @@ def _distance_map(sid: str, version: str, spacing: tuple[float, float, float] | 
     return dist.astype(np.float32), step
 
 
-@lru_cache(maxsize=4)
+@lru_cache(maxsize=2)  # a couple of studies; large CT arrays are hundreds of MB each
 def _organ(sid: str, version: str, organ: str):
     """Organ mask and its bounding box (slices, rows, cols), for locating areas."""
     _, base, _ = _context(sid, version)
@@ -210,7 +210,9 @@ def explain_point(study: dict, version: str, z: int, r: int, c: int) -> dict:
             n = min(nodules, key=lambda n: (n["centroid"]["slice"] - z) ** 2 + (n["centroid"]["row"] - r) ** 2 + (n["centroid"]["col"] - c) ** 2)
             from ..imaging.measure import lung_rads
 
-            out["size"] = f"Nodule {nodules.index(n) + 1}: {n['longest_diameter']} x {n['short_diameter']} {units}, size-based Lung-RADS {lung_rads(n['mean_diameter'])['category']}"
+            out["size"] = f"Nodule {nodules.index(n) + 1}: {n['longest_diameter']} x {n['short_diameter']} {units}"
+            if spacing:  # Lung-RADS needs sizes in mm, not pixels
+                out["size"] += f", size-based Lung-RADS {lung_rads(n['mean_diameter'])['category']}"
         return out
 
     organ, box = _organ(study["id"], version, profile.organ)

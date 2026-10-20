@@ -85,7 +85,11 @@ def _gpu_works(device: torch.device) -> bool:
         torch.cuda.synchronize(device) if device.type == "cuda" else None
         return True
     except Exception as exc:  # noqa: BLE001 - any failure means: use the CPU instead
-        GPU_PROBLEM = f"{torch.cuda.get_device_name(device) if device.type == 'cuda' else device.type} found but not usable with this PyTorch build"
+        try:  # the name lookup can fail on the same broken setup
+            name = torch.cuda.get_device_name(device) if device.type == "cuda" else device.type
+        except Exception:  # noqa: BLE001
+            name = "GPU"
+        GPU_PROBLEM = f"{name} found but not usable with this PyTorch build"
         log.warning("GPU found but not usable (%s); using the CPU. Install a PyTorch build for this GPU (run.bat does this).", exc)
         return False
 

@@ -187,11 +187,13 @@ def mesh(sid: str):
     if s["profile"]["key"] == "breast_mri":
         data["parts"]["tumor"] = {"what": BREAST_MRI_TUMOR[0], "effect": BREAST_MRI_TUMOR[1]}
     if s["scan"]["is_volume"] and m.get("nodules"):
-        dz, dy, dx = s["scan"]["spacing_mm"]
+        spacing = s["scan"]["spacing_mm"]
+        dz, dy, dx = spacing or (1.0, 1.0, 1.0)  # same default as build_meshes
         data["nodules"] = [
             {**{k: n[k] for k in ("longest_diameter", "short_diameter", "mean_diameter", "volume_mm3", "side", "key_slice")},
              "center": [n["centroid"]["col"] * dx, n["centroid"]["slice"] * dz, -n["centroid"]["row"] * dy],
-             "lung_rads": lung_rads(n["mean_diameter"])["category"]}
+             # Lung-RADS needs sizes in mm, not pixels.
+             "lung_rads": lung_rads(n["mean_diameter"])["category"] if spacing else "n/a (size in pixels)"}
             for n in m["nodules"]
         ]
     text = json.dumps(plain(data))
@@ -208,7 +210,10 @@ def probe(sid: str, slice: int = Query(0), row: int | None = Query(None), col: i
     """
     s = _study(sid)
     if points:
-        candidates = [tuple(int(float(v)) for v in p.split(",")) for p in points.split(";")[:16] if p.count(",") == 2]
+        try:
+            candidates = [tuple(int(float(v)) for v in p.split(",")) for p in points.split(";")[:16] if p.count(",") == 2]
+        except (ValueError, OverflowError) as exc:  # non-numbers, nan, inf
+            raise HTTPException(400, "points must be 'slice,row,col;...' numbers") from exc
     elif row is not None and col is not None:
         candidates = [(slice, row, col)]
     else:

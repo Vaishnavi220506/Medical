@@ -136,12 +136,13 @@ def analyze(
 
     seg = engine.segment(scan, profile)
     log.info("Outline done (%s model, %.1fs)", seg.model or seg.method, time.time() - t0)
-    if seg.model == "3d" or (profile.key not in engine.classifiers and seg.method == "model"):
-        # No separate classifier: the outline model itself decides whether a lesion is present.
+    if seg.model == "3d":
         cls, heat = engine.classify_from_3d(seg, profile)
     else:
+        # Without a classifier for this scan type, classify() lets the outline model decide.
         cls, heat = engine.classify(scan, profile, seg)
-        seg = engine.refine(seg, cls, profile)
+        if profile.key in engine.classifiers:
+            seg = engine.refine(seg, cls, profile)
     log.info("Classification: %s (%.1fs)", cls.label, time.time() - t0)
     reference = scan.primary(profile.classifier_channel_preference)
     measurements = measure(

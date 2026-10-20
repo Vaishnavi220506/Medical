@@ -25,9 +25,10 @@ def lung_mask(vol: np.ndarray) -> np.ndarray:
     if not keep:
         return np.zeros_like(air)
     lungs = np.isin(comp, keep)
-    # Fill holes slice by slice: nodules and vessels are bright spots inside the dark lung.
-    lungs = np.stack([ndimage.binary_fill_holes(s) for s in ndimage.binary_closing(lungs, iterations=2)])
-    return lungs
+    # Close and fill holes slice by slice (nodules and vessels are bright spots inside the dark
+    # lung). Padding first keeps the closing from eroding away the lungs at the volume's edges,
+    # which would empty the mask of a single slice and trim the first and last slices of a CT.
+    return np.stack([ndimage.binary_fill_holes(ndimage.binary_closing(np.pad(s, 2), iterations=2)[2:-2, 2:-2]) for s in lungs])
 
 
 def lung_box(vol: np.ndarray, margin: int = 10) -> tuple[slice, slice, slice] | None:
