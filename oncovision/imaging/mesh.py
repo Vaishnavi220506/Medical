@@ -27,21 +27,25 @@ def _surface(mask: np.ndarray, spacing, step: int = 1, sigma: float = 1.0) -> di
     return {"vertices": np.round(verts, 2).ravel().tolist(), "faces": faces.astype(int).ravel().tolist()}
 
 
-def _breasts(vol: np.ndarray, sp) -> tuple[np.ndarray, str]:
-    """Breast MRI anatomy: the breasts as they stand out in front of the chest wall.
-
-    Per-slice masks are ragged (fat and glands vary a lot in brightness), so the body is the
-    largest 3D region of the smoothed scan, closed into one shell. When the scan shows the whole
-    chest (both breasts), only tissue in front of the chest wall is kept: on each axial slice the
-    chest wall is the first row (from the front, row 0) where the body is nearly as wide as the
-    torso. Scans of one breast only keep the whole scanned region.
-    """
+def _body(vol: np.ndarray) -> np.ndarray:
+    """The scanned part of the body as one smooth, closed region (largest 3D region of the smoothed scan)."""
     body = ndimage.gaussian_filter(vol, 1.5) > 0.08
     comp, n = ndimage.label(body)
     if n:
         body = comp == (np.argmax(ndimage.sum(body, comp, range(1, n + 1))) + 1)
     body = ndimage.binary_closing(np.pad(body, 3), iterations=3)[3:-3, 3:-3, 3:-3]
-    body = np.stack([ndimage.binary_fill_holes(s) for s in body])
+    return np.stack([ndimage.binary_fill_holes(s) for s in body])
+
+
+def _breasts(body: np.ndarray, sp) -> tuple[np.ndarray, str]:
+    """Breast MRI anatomy: the breasts as they stand out in front of the chest wall.
+
+    ``body`` comes from _body: per-slice masks are ragged (fat and glands vary a lot in brightness).
+    When the scan shows the whole
+    chest (both breasts), only tissue in front of the chest wall is kept: on each axial slice the
+    chest wall is the first row (from the front, row 0) where the body is nearly as wide as the
+    torso. Scans of one breast only keep the whole scanned region.
+    """
     if body.shape[2] * sp[2] < 280:  # one breast only (see measure.ONE_BREAST_FOV_MM)
         return body, "Breast (scanned area)"
     # One chest-wall row for the whole scan (median over slices), so slices above and below the
@@ -75,16 +79,25 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
         "slice_plane": {"center_xz": [(w - 1) / 2 * spacing[2], -(h - 1) / 2 * spacing[1]], "size": [w * spacing[2], h * spacing[1]]},
     }
     lungs = lung_mask(vol) if profile.organ == "lung" else None
+    torso = None  # a faint body outline around the organ, so it is clear where in the body it is
     if lungs is not None and lungs.any():  # chest CT: show the lungs, not the outer body shell
         anatomy, out["anatomy_label"] = lungs, "Lungs"
+        torso = _body(vol)
     elif profile.organ == "breast":
-        anatomy, out["anatomy_label"] = _breasts(vol, sp)
+        torso = _body(vol)
+        anatomy, out["anatomy_label"] = _breasts(torso, sp)
+        if out["anatomy_label"] != "Breasts":
+            torso = None  # one-breast scans: the scanned area is already the whole outline
     else:
         anatomy = ndimage.binary_fill_holes(np.stack([foreground_mask(s) for s in vol]))
         out["anatomy_label"] = "Brain / head" if profile.organ == "brain" else "Body outline"
     surface = _surface(anatomy, sp, step=2, sigma=2.5 if profile.organ == "breast" else 1.6)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
+    if torso is not None:
+        surface = _surface(torso, sp, step=3, sigma=3.0)
+        if surface:
+            out["meshes"].append({"name": "body", "description": "Chest (scanned part of the body)", "color": [165, 180, 252], "opacity": 0.06, **surface})
     for lbl in profile.display_labels:
         surface = _surface(lab == lbl.index, sp)
         if surface:

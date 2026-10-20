@@ -436,7 +436,7 @@ async function load3D() {
     }
     const volumes = data.pseudo ? {} : Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
     $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
-      const color = m.name === "anatomy" ? "103,232,249" : m.color.join(",");
+      const color = m.name === "anatomy" ? "103,232,249" : m.name === "body" ? "165,180,252" : m.color.join(",");
       const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
       return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
@@ -508,7 +508,7 @@ function explain3D(s, data, hit) {
   const ev = { clientX: hit.clientX, clientY: hit.clientY };
   const host = $("#three-container");
   const part = data.parts?.[hit.name];
-  if (hit.name !== "anatomy" && part) {
+  if (!["anatomy", "body"].includes(hit.name) && part) {
     const meshInfo = data.meshes.find((m) => m.name === hit.name) || {};
     const info = { kind: "tumor", title: meshInfo.description || hit.name, what: part.what, effect: part.effect, color: meshInfo.color,
       type_note: hit.name === "possible_extent" ? null : data.type_note };

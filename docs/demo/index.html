@@ -100,7 +100,7 @@
       volumes = data.regions || {};
       $("#cut-label").textContent = `Cut away ${(data.anatomy_label || "outline").split(" ")[0].toLowerCase()}`;
       $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
-        const color = m.name === "anatomy" ? "103,232,249" : m.color.join(",");
+        const color = m.name === "anatomy" ? "103,232,249" : m.name === "body" ? "165,180,252" : m.color.join(",");
         const label = m.name === "anatomy" ? data.anatomy_label || "Outline" : m.description || m.name;
         const vol = volumes[m.name]?.volume_cm3 != null ? `<span class="vol">${(+volumes[m.name].volume_cm3).toFixed(1)} cm³</span>` : "";
         return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
@@ -152,7 +152,7 @@
     function onHover(hit) {
       if (!hit) return show(null);
       const ev = { clientX: hit.clientX, clientY: hit.clientY };
-      if (hit.name !== "anatomy" && data.parts?.[hit.name]) {
+      if (!["anatomy", "body"].includes(hit.name) && data.parts?.[hit.name]) {
         const m = data.meshes.find((x) => x.name === hit.name);
         const reg = volumes[hit.name];
         let size = reg?.volume_cm3 != null ? `${(+reg.volume_cm3).toFixed(1)} cm³ (${reg.percent_of_tumor}% of the tumor)` : "";

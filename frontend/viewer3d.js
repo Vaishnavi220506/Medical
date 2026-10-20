@@ -96,9 +96,11 @@ export async function renderMeshes(container, data) {
   for (const m of data.meshes) {
     const geometry = toGeometry(m);
     let mesh;
-    if (m.name === "anatomy") {
+    if (m.name === "anatomy" || m.name === "body") {
+      // The organ glows cyan; the surrounding body outline is a fainter lavender shell.
+      const body = m.name === "body";
       const material = new THREE.ShaderMaterial({
-        uniforms: { glowColor: { value: new THREE.Color(0x67e8f9) }, strength: { value: 1.0 } },
+        uniforms: { glowColor: { value: new THREE.Color(body ? 0xa5b4fc : 0x67e8f9) }, strength: { value: body ? 0.45 : 1.0 } },
         vertexShader: FRESNEL_VERTEX,
         fragmentShader: FRESNEL_FRAGMENT,
         transparent: true,
@@ -109,7 +111,8 @@ export async function renderMeshes(container, data) {
         clippingPlanes: [cutPlane],
       });
       mesh = new THREE.Mesh(geometry, material);
-      mesh.renderOrder = 10;
+      mesh.renderOrder = body ? 11 : 10;
+      mesh.userData.strength = body ? 0.45 : 1.0;
     } else {
       const style = STYLE[m.name] || { opacity: m.opacity ?? 0.9, roughness: 0.35, renderOrder: m.opacity < 0.5 ? 4 : 2 };
       const color = new THREE.Color(`rgb(${m.color.join(",")})`);
@@ -233,10 +236,10 @@ export async function renderMeshes(container, data) {
     pointer = { x: e.clientX, y: e.clientY, buttons: e.buttons };
   });
   renderer.domElement.addEventListener("pointerleave", () => { pointer = null; setHover(null); viewer.onHover?.(null); });
-  const rank = (name) => (name === "anatomy" ? 2 : name === "possible_extent" ? 1 : 0);
+  const rank = (name) => ({ body: 3, anatomy: 2, possible_extent: 1 })[name] ?? 0;
   const glow = (mesh, on) => {
     if (!mesh) return;
-    if (mesh.material.uniforms) mesh.material.uniforms.strength.value = on ? 1.8 : 1.0;
+    if (mesh.material.uniforms) mesh.material.uniforms.strength.value = (mesh.userData.strength ?? 1) * (on ? 1.8 : 1.0);
     else if (mesh.material.emissive) mesh.material.emissiveIntensity = on ? 3.0 : 1.0;
   };
   const setHover = (mesh) => {
@@ -250,7 +253,7 @@ export async function renderMeshes(container, data) {
     if (!pointer || pointer.buttons) return;
     raycaster.setFromCamera(ndc, camera);
     const hits = raycaster.intersectObjects(handles.filter((h) => h.visible), false)
-      .filter((h) => h.object.userData.name !== "anatomy" || cutPlane.distanceToPoint(h.point) >= 0)
+      .filter((h) => !["anatomy", "body"].includes(h.object.userData.name) || cutPlane.distanceToPoint(h.point) >= 0)
       .sort((a, b) => rank(a.object.userData.name) - rank(b.object.userData.name) || a.distance - b.distance);
     const hit = hits[0];
     setHover(hit?.object || null);
@@ -277,7 +280,7 @@ export async function renderMeshes(container, data) {
     const fade = Math.min(1, (now - born) / 900);
     if (fade < 1 || handles[0]?.material.opacity === 0) {
       handles.forEach((m) => {
-        if (m.material.uniforms) m.material.uniforms.strength.value = 1.0 * fade;
+        if (m.material.uniforms) m.material.uniforms.strength.value = (m.userData.strength ?? 1) * fade;
         else m.material.opacity = m.userData.targetOpacity * fade;
         if (fade >= 1 && !m.material.uniforms) m.material.transparent = m.userData.targetOpacity < 1;
       });
