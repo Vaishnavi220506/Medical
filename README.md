@@ -76,15 +76,13 @@ All numbers are on **held-out real scans the models never trained on**, split by
 |---|---|---|---|---|
 | Scans tested | 400 | 117 | 221 | 120 |
 | Scan type recognised | **100%** | **100%** | refused (no model yet) | **100% rejected** |
-| Correct diagnosis | **95.0%** | **88.0%**² | – | – |
-| Tumor outlined | 65.7%¹ | 92.8%² | – | – |
-| Normal scans wrongly outlined | **1%** | 10%² | – | – |
-| Flagged for expert review | 45% | 30% | – | – |
-| Time per image (4-core CPU) | 0.6 s | 0.7 s | – | – |
+| Correct diagnosis | **95.0%** | **85.5%** | – | – |
+| Tumor outlined | 63.3% | 92.8% | – | – |
+| Normal scans wrongly outlined | **1%** | 15% | – | – |
+| Flagged for expert review | 40% | 22% | – | – |
+| Time per image (4-core CPU) | 1.1 s | 1.5 s | – | – |
 
-¹ With the retrained 2D brain outline model, on 100 test images per class (glioma 84%, meningioma 90%, pituitary 23%); the previous model outlined 61% of the same images. Other brain numbers are from the 400-image run.
-
-² Breast models retrained on BUSI + BUS-BRA + BUS-UCLM, measured on the same 117 BUSI validation images (previous model: 84.6% and 20%).
+With the retrained models, compared with the previous ones on the same images: brain tumors outlined 63.3% (was 55.7%), breast normal images wrongly outlined 15% (was 20%), breast diagnosis 85.5% (was 84.6%), and fewer results flagged for review (brain 40% vs 45%, breast 22% vs 30%). Results vary by a few images between runs because of Monte-Carlo dropout.
 
 ### 3D brain tumor model (BraTS 2023, whole 3D volumes)
 
@@ -114,7 +112,7 @@ For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.
 | Brain tumor type, ResNet-18 | 1,600 test MRIs (Masoud Nickparvar dataset) | **95.7% accuracy**, macro-F1 0.956. No tumor 99.8% recall, pituitary 99.8%, meningioma 98%, glioma 85% (mostly confused with meningioma) |
 | Brain tumor outline, U-Net | 542 slices from held-out Figshare patients; 240 slices (all views, T1ce / FLAIR / T2) from held-out BraTS patients | **Dice 0.68** (Figshare), **0.67** (BraTS; previous Figshare-only model 0.17); in the app, false outlines on 1% of normal MRIs |
 | Breast lesion type, ResNet-18 | 508 held-out images from 3 datasets (BUSI, BUS-BRA, BUS-UCLM; patient-disjoint) | **84.5% accuracy**, macro-F1 0.84. Per dataset: BUSI 88%, BUS-BRA 87% (malignant recall 91%; BUSI-only model: 54% / 23%), BUS-UCLM 77% (malignant recall 52%; BUSI-only model: 5%) |
-| Breast lesion outline, U-Net | same held-out images, in the full app | **Dice 0.68** BUSI, **0.86** BUS-BRA, 0.38 BUS-UCLM; normal images wrongly outlined 10% (BUSI), 11% (BUS-UCLM) |
+| Breast lesion outline, U-Net | same held-out images, in the full app | **Dice 0.68** BUSI, **0.86** BUS-BRA, 0.38 BUS-UCLM; normal images wrongly outlined 10–15% (BUSI), 11% (BUS-UCLM) |
 | Breast tumor on MRI, 3D U-Net | 100 held-out MAMA-MIA patients (DCE-MRI) | **Dice 0.62**; in the full app on 30 of them: main tumor found in **29/30 (97%)**, Dice 0.54, about 1.6 false spots per scan |
 | Breast tumor on MRI, 2D U-Net (single slices) | slices of the same held-out patients | **Dice 0.53** |
 | Scan-type router | brain MRI / breast ultrasound / breast MRI / lung CT / other | held-out: breast MRI volumes 30/30, brain 124/124, breast ultrasound 150/150, lung CT 28/28, other images rejected 120/120 |

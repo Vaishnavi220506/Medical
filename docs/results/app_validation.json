@@ -4,10 +4,10 @@
     "rejected_as_unsupported": 0,
     "routing_accuracy": 1.0,
     "classification_accuracy_when_routed": 0.95,
-    "tumor_outlined_rate": 0.557,
+    "tumor_outlined_rate": 0.633,
     "normal_false_outline_rate": 0.01,
-    "flagged_for_review_rate": 0.453,
-    "seconds_per_scan": 0.55,
+    "flagged_for_review_rate": 0.398,
+    "seconds_per_scan": 1.05,
     "confusion": {
       "glioma -> glioma": 84,
       "glioma -> meningioma": 12,
@@ -23,35 +23,20 @@
     "images": 117,
     "rejected_as_unsupported": 0,
     "routing_accuracy": 1.0,
-    "classification_accuracy_when_routed": 0.846,
-    "tumor_outlined_rate": 0.918,
-    "normal_false_outline_rate": 0.2,
-    "flagged_for_review_rate": 0.299,
-    "seconds_per_scan": 0.69,
+    "classification_accuracy_when_routed": 0.855,
+    "tumor_outlined_rate": 0.928,
+    "normal_false_outline_rate": 0.15,
+    "flagged_for_review_rate": 0.222,
+    "seconds_per_scan": 1.5,
     "confusion": {
-      "benign -> benign": 55,
-      "benign -> malignant": 8,
-      "benign -> normal": 3,
-      "malignant -> benign": 4,
-      "malignant -> malignant": 26,
-      "malignant -> normal": 1,
-      "normal -> benign": 2,
-      "normal -> normal": 18
-    }
-  },
-  "lung_ct": {
-    "images": 221,
-    "rejected_as_unsupported": 221,
-    "routing_accuracy": 0.0,
-    "classification_accuracy_when_routed": 0.0,
-    "tumor_outlined_rate": null,
-    "normal_false_outline_rate": null,
-    "flagged_for_review_rate": 0.0,
-    "seconds_per_scan": 0.02,
-    "confusion": {
-      "benign -> rejected": 100,
-      "malignant -> rejected": 49,
-      "normal -> rejected": 72
+      "benign -> benign": 58,
+      "benign -> malignant": 6,
+      "benign -> normal": 2,
+      "malignant -> benign": 6,
+      "malignant -> malignant": 25,
+      "normal -> benign": 1,
+      "normal -> malignant": 2,
+      "normal -> normal": 17
     }
   },
   "other": {
@@ -62,7 +47,7 @@
     "tumor_outlined_rate": null,
     "normal_false_outline_rate": null,
     "flagged_for_review_rate": null,
-    "seconds_per_scan": 0.08,
+    "seconds_per_scan": 0.2,
     "confusion": {
       "other -> rejected": 120
     }
