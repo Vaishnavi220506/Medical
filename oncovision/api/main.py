@@ -19,7 +19,7 @@ from .. import __version__
 from ..analysis.explain import BREAST_MRI_TUMOR, PARTS, explain_point, type_note
 from ..analysis.longitudinal import compare, timeline
 from ..analysis.pipeline import UnsupportedScanError, analyze, get_engine, get_store
-from ..config import settings
+from ..config import ROOT_DIR, settings
 from ..imaging.io import ScanLoadError, anonymize_dicom
 from ..imaging.measure import lung_rads
 from ..imaging.mesh import build_meshes, build_pseudo_meshes
@@ -85,6 +85,44 @@ def languages():
 
 
 # ---------------------------------------------------------------------- analysis
+
+SAMPLES_DIR = ROOT_DIR / "samples"
+
+
+def _samples() -> list[dict]:
+    """Bundled sample scans (samples/catalog.json) whose files are all present."""
+    try:
+        catalog = json.loads((SAMPLES_DIR / "catalog.json").read_text())
+    except (OSError, ValueError):
+        return []
+    return [s for s in catalog if all((SAMPLES_DIR / f).is_file() for f in s["files"])]
+
+
+@app.get("/api/samples")
+def samples():
+    return [{k: s[k] for k in ("key", "title", "subtitle", "organ") if k in s} | {"volume": not s.get("thumb")} for s in _samples()]
+
+
+@app.get("/api/samples/{key}/thumb")
+def sample_thumb(key: str):
+    s = next((s for s in _samples() if s["key"] == key and s.get("thumb")), None)
+    if not s:
+        raise HTTPException(404, "No such sample image")
+    path = SAMPLES_DIR / s["thumb"]
+    return Response(path.read_bytes(), media_type="image/png" if path.suffix == ".png" else "image/jpeg")
+
+
+@app.post("/api/samples/{key}")
+async def analyze_sample(key: str):
+    s = next((s for s in _samples() if s["key"] == key), None)
+    if not s:
+        raise HTTPException(404, "No such sample")
+    payload = [((SAMPLES_DIR / f).name, (SAMPLES_DIR / f).read_bytes(), None) for f in s["files"]]
+    try:
+        return await run_in_threadpool(analyze, payload, "auto", s["patient"], None, None)
+    except (ScanLoadError, UnsupportedScanError) as exc:
+        raise HTTPException(422, str(exc)) from exc
+
 
 @app.post("/api/analyze")
 async def analyze_endpoint(
@@ -170,7 +208,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v11.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v13.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
