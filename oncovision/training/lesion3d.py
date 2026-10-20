@@ -43,27 +43,47 @@ def write_splits(prepared: Path, val_cases: int, test_cases: int) -> dict:
     return splits
 
 
-class PatchDataset(Dataset):
-    """Random 3D patches from cases held in memory; half are centred on a lesion."""
+def to_npy(files: list[Path]) -> list[tuple[Path, np.ndarray]]:
+    """Training cases as (uncompressed image on disk, lesion voxel positions in memory).
 
-    def __init__(self, cases: list[tuple[np.ndarray, np.ndarray]], patch: int, samples_per_epoch: int, fg_fraction: float = 0.5):
+    Images are read memory-mapped during training, so hundreds of CTs never have to fit in RAM
+    at once; lesions are small, so their voxel positions replace full-size label volumes.
+    """
+    out = []
+    for f in files:
+        img = f.with_name(f.stem + "_img.npy")
+        image, label = load_case(f)
+        if not img.exists():
+            np.save(img, image)
+        out.append((img, np.argwhere(label > 0).astype(np.int16)))
+    return out
+
+
+class PatchDataset(Dataset):
+    """Random 3D patches read from memory-mapped images; half are centred on a lesion."""
+
+    def __init__(self, cases: list[tuple[Path, np.ndarray]], patch: int, samples_per_epoch: int, fg_fraction: float = 0.5):
         self.cases, self.patch, self.n, self.fg = cases, patch, samples_per_epoch, fg_fraction
-        self.fg_voxels = [np.argwhere(lab > 0) for _, lab in cases]
+        self.fg_voxels = [fg for _, fg in cases]
 
     def __len__(self):
         return self.n
 
     def __getitem__(self, i):
         k = random.randrange(len(self.cases))
-        img, lab = self.cases[k]
+        img = np.load(self.cases[k][0], mmap_mode="r")
+        fg = self.fg_voxels[k]
         p = self.patch
-        if random.random() < self.fg and len(self.fg_voxels[k]):
-            center = self.fg_voxels[k][random.randrange(len(self.fg_voxels[k]))] + np.random.randint(-p // 4, p // 4 + 1, 3)
+        if random.random() < self.fg and len(fg):
+            center = fg[random.randrange(len(fg))] + np.random.randint(-p // 4, p // 4 + 1, 3)
         else:
-            center = [random.randrange(s) for s in lab.shape]
-        start = [int(np.clip(c - p // 2, 0, max(s - p, 0))) for c, s in zip(center, lab.shape)]
+            center = [random.randrange(s) for s in img.shape]
+        start = [int(np.clip(c - p // 2, 0, max(s - p, 0))) for c, s in zip(center, img.shape)]
         sl = tuple(slice(a, a + p) for a in start)
-        x, y = img[sl].astype(np.float32) / 255.0, lab[sl].astype(np.int64)
+        x = img[sl].astype(np.float32) / 255.0
+        y = np.zeros(x.shape, np.int64)
+        inside = np.all((fg >= start) & (fg < np.array(start) + np.array(x.shape)), axis=1)
+        y[tuple((fg[inside] - start).T)] = 1
         pad = [(0, p - s) for s in y.shape]
         x, y = np.pad(x, pad), np.pad(y, pad)
         for axis in range(3):
@@ -158,7 +178,7 @@ def train(args, files: list[Path], out: Path, meta: dict, region_fn: Callable[[n
     if not train_files or not val:
         raise SystemExit(f"Need more cases (found {len(files)}).")
     print(f"device={device}  train={len(train_files)}  val={len(val)}  test={len(test)} patients", flush=True)
-    train_cases = [load_case(f) for f in train_files]
+    train_cases = to_npy(train_files)
     val_cases = [load_case(f) for f in val]
 
     def regions(cases):
