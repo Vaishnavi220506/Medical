@@ -1,0 +1,20 @@
+[
+  {"key": "brain-3d", "title": "Brain MRI, 3D", "subtitle": "Glioma, 4 MRI sequences (BraTS)", "organ": "brain",
+   "files": ["brain_mri_3d/patient1/BraTS-GLI-01256-000-t1c.nii.gz", "brain_mri_3d/patient1/BraTS-GLI-01256-000-t1n.nii.gz",
+             "brain_mri_3d/patient1/BraTS-GLI-01256-000-t2f.nii.gz", "brain_mri_3d/patient1/BraTS-GLI-01256-000-t2w.nii.gz"],
+   "patient": "Sample: brain 3D"},
+  {"key": "breast-mri-3d", "title": "Breast MRI, 3D", "subtitle": "Breast cancer, contrast MRI (MAMA-MIA)", "organ": "breast",
+   "files": ["breast_mri_3d/patient2_ISPY2_986734.nii.gz"], "patient": "Sample: breast MRI"},
+  {"key": "lung-ct-3d", "title": "Lung CT, 3D", "subtitle": "Lung nodule, chest CT (LIDC-IDRI)", "organ": "lung",
+   "files": ["lung_ct_3d/LIDC-IDRI-0289_ct.nii.gz"], "patient": "Sample: lung CT"},
+  {"key": "brain-glioma", "title": "Brain MRI image", "subtitle": "Glioma", "organ": "brain",
+   "files": ["images/brain_glioma.jpg"], "patient": "Sample: brain images", "thumb": "images/brain_glioma.jpg"},
+  {"key": "brain-meningioma", "title": "Brain MRI image", "subtitle": "Meningioma", "organ": "brain",
+   "files": ["images/brain_meningioma.jpg"], "patient": "Sample: brain images", "thumb": "images/brain_meningioma.jpg"},
+  {"key": "brain-pituitary", "title": "Brain MRI image", "subtitle": "Pituitary tumor", "organ": "brain",
+   "files": ["images/brain_pituitary.jpg"], "patient": "Sample: brain images", "thumb": "images/brain_pituitary.jpg"},
+  {"key": "breast-us-malignant", "title": "Breast ultrasound", "subtitle": "Malignant lesion (biopsy-proven)", "organ": "breast",
+   "files": ["images/breast_us_malignant.png"], "patient": "Sample: breast ultrasound", "thumb": "images/breast_us_malignant.png"},
+  {"key": "breast-us-benign", "title": "Breast ultrasound", "subtitle": "Benign lesion (biopsy-proven)", "organ": "breast",
+   "files": ["images/breast_us_benign.png"], "patient": "Sample: breast ultrasound", "thumb": "images/breast_us_benign.png"}
+]

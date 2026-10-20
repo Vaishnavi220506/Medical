@@ -72,6 +72,19 @@ button.primary { background: var(--accent-2); border-color: var(--accent-2); col
 
 .empty { max-width: 640px; margin: 60px auto; text-align: center; line-height: 1.6; }
 .empty h1 { font-size: 26px; margin-bottom: 12px; }
+.empty:has(#samples-box:not([hidden])) { max-width: 860px; }
+.samples-head { font-size: 17px; margin: 28px 0 2px; }
+.samples { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; margin-top: 14px; text-align: left; }
+.sample-card { display: flex; flex-direction: column; gap: 2px; padding: 8px; border-radius: var(--radius); border: 1px solid var(--border);
+  background: var(--panel); color: var(--text); cursor: pointer; font: inherit; text-align: left; transition: border-color .15s, transform .15s, background .15s; }
+.sample-card:hover, .sample-card:focus-visible { border-color: var(--accent); background: var(--panel-2); transform: translateY(-2px); outline: none; }
+.sample-thumb { width: 100%; aspect-ratio: 4 / 3; object-fit: cover; border-radius: 8px; background: #000; margin-bottom: 6px; }
+.sample-thumb.volume { display: grid; place-items: center; font-size: 34px; position: relative;
+  background: radial-gradient(circle at 50% 40%, rgba(56, 189, 248, .25), transparent 65%), #070d1a; }
+.sample-thumb.volume em { position: absolute; right: 8px; bottom: 6px; font-size: 11px; font-style: normal; font-weight: 600;
+  color: var(--accent); border: 1px solid var(--accent); border-radius: 6px; padding: 0 5px; }
+.sample-title { font-size: 13px; font-weight: 600; }
+.sample-sub { font-size: 12px; color: var(--muted); line-height: 1.35; }
 
 .study-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
 .actions { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -73,8 +73,12 @@
     <main class="main" id="main">
       <div class="empty" id="empty">
         <h1>Tumor detection, segmentation and explanation</h1>
-        <p>Upload a brain MRI, breast ultrasound or lung CT to get started. OncoVision outlines the tumor and its sub-regions, measures it, shows what the AI focused on and how sure it is, tracks change over time, and lets you ask questions about the result.</p>
-        <p class="muted">No scans? Run <code>python scripts/make_demo_data.py</code> and upload the files from <code>demo_data/</code>.</p>
+        <p>Upload a brain MRI, breast ultrasound or MRI, or lung CT to get started. OncoVision outlines the tumor and its sub-regions, measures it, shows what the AI focused on and how sure it is, tracks change over time, and lets you ask questions about the result.</p>
+        <div id="samples-box" hidden>
+          <h2 class="samples-head">No scan at hand? Try a real one</h2>
+          <p class="muted">Patients the models never saw in training. One click runs the full analysis.</p>
+          <div class="samples" id="samples"></div>
+        </div>
       </div>
 
       <div id="analyzing" class="analyzing" hidden>

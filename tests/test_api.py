@@ -116,3 +116,14 @@ def test_pseudo_3d_shape(client, demo_dir):
     assert mesh["pseudo"] and mesh["image_factor"] >= 1
     if "lesion" in names:
         assert "possible_extent" in names and mesh["depth_ratio"]["median"] < mesh["depth_ratio"]["p90"]
+
+
+def test_samples(client):
+    samples = client.get("/api/samples").json()
+    keys = {s["key"] for s in samples}
+    assert {"brain-glioma", "breast-us-malignant", "lung-ct-3d"} <= keys
+    assert client.get("/api/samples/brain-glioma/thumb").headers["content-type"] == "image/jpeg"
+    assert client.get("/api/samples/lung-ct-3d/thumb").status_code == 404  # volumes have no thumbnail
+    assert client.post("/api/samples/nope").status_code == 404
+    study = client.post("/api/samples/breast-us-benign").json()
+    assert study["profile"]["key"] == "breast_us" and study["patient"]["label"] == "Sample: breast ultrasound"

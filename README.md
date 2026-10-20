@@ -29,6 +29,8 @@ Requires **Python 3.10+**. No GPU is needed: trained models are included and run
 
 The first run creates a virtual environment, installs everything, and starts the app at **http://localhost:8000**. To enable the chat assistant and AI-written reports, put an Anthropic API key in the `.env` file and restart. Everything else works without one.
 
+No scans at hand? The start page has **one-click sample cards** (brain MRI, breast ultrasound and MRI, lung CT; real patients the models never trained on).
+
 <details>
 <summary>Manual setup / Docker</summary>
 
@@ -74,13 +76,13 @@ All numbers are on **held-out real scans the models never trained on**, split by
 
 | | Brain MRI | Breast ultrasound | Lung CT | Unsupported (chest / bone X-rays) |
 |---|---|---|---|---|
-| Scans tested | 400 | 117 | 221 | 120 |
-| Scan type recognised | **100%** | **100%** | refused (no model yet) | **100% rejected** |
-| Correct diagnosis | **95.0%** | **85.5%** | – | – |
-| Tumor outlined | 63.3% | 92.8% | – | – |
-| Normal scans wrongly outlined | **1%** | 15% | – | – |
-| Flagged for expert review | 40% | 22% | – | – |
-| Time per image (4-core CPU) | 1.1 s | 1.5 s | – | – |
+| Scans tested | 400 | 117 | 20 whole 3D CTs (27 nodules) | 120 |
+| Scan type recognised | **100%** | **100%** | **100%** | **100% rejected** |
+| Correct diagnosis | **95.0%** | **85.5%** | largest nodule found in **8 of 10** patients with nodules (experimental) | – |
+| Tumor outlined | 63.3% | 92.8% | 56% of all nodules | – |
+| Normal scans wrongly outlined | **1%** | 15% | about 1 false spot per CT; 6 of 10 nodule-free CTs called clear | – |
+| Flagged for expert review | 40% | 22% | 100% (always, experimental) | – |
+| Time per image (4-core CPU) | 1.1 s | 1.5 s | 1–3 min per CT (seconds on a GPU) | – |
 
 With the retrained models, compared with the previous ones on the same images: brain tumors outlined 63.3% (was 55.7%), breast normal images wrongly outlined 15% (was 20%), breast diagnosis 85.5% (was 84.6%), and fewer results flagged for review (brain 40% vs 45%, breast 22% vs 30%). Results vary by a few images between runs because of Monte-Carlo dropout.
 
@@ -99,14 +101,12 @@ For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.
 
 ### Interactive 3D
 
-**[▶ Open the live 3D demo](https://vaishnavi220506.github.io/Medical/docs/demo/)**: held-out patients for brain MRI and breast MRI (lung CT follows). Rotate, zoom and hover over the organ or the tumor for plain-language explanations: what each tumor part is, which area you are on, what it does and how far the tumor is.
+**[▶ Open the live 3D demo](https://vaishnavi220506.github.io/Medical/docs/demo/)**: held-out patients for brain MRI, breast MRI and lung CT. Rotate, zoom and hover over the organ or the tumor for plain-language explanations: what each tumor part is, which area you are on, what it does and how far the tumor is.
 
-| Brain MRI (BraTS 2023) | Breast MRI (MAMA-MIA, Duke) |
-|---|---|
-| ![Brain: glowing brain, necrotic core (red), active tumor (blue), edema (yellow)](docs/results/3d_view.gif) | ![Breast: both breasts, the cancer in the right breast and a small false alarm in the left](docs/results/3d_breast.gif) |
-| Necrotic core, edema and active tumor, outlined from four MRI sequences | The cancer (right breast); the small spot in the left breast is a false alarm by the model |
-
-3D model files you can open in GitHub's viewer or any 3D program: [brain and tumor](docs/results/brain_and_tumor_3d.stl) · [tumor only](docs/results/tumor_3d.stl).
+| Brain MRI (BraTS 2023) | Breast MRI (MAMA-MIA, Duke) | Lung CT (LIDC-IDRI) |
+|---|---|---|
+| ![Brain: glowing brain, necrotic core (red), active tumor (blue), edema (yellow)](docs/results/3d_view.gif) | ![Breast: both breasts, the cancer in the right breast and a small false alarm in the left](docs/results/3d_breast.gif) | ![Lungs with a 2.7 cm nodule in the right lung](docs/results/3d_lung.gif) |
+| Necrotic core, edema and active tumor, outlined from four MRI sequences | The cancer (right breast); the small spot in the left breast is a false alarm by the model | A 2.7 cm nodule in the right lung, found with no false alarms |
 
 ### Individual models
 
@@ -120,6 +120,7 @@ For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.
 | Breast tumor on MRI, 2D U-Net (single slices) | slices of the same held-out patients | **Dice 0.53** |
 | Scan-type router | brain MRI / breast ultrasound / breast MRI / lung CT / other | held-out: breast MRI volumes 30/30, brain 124/124, breast ultrasound 150/150, lung CT 28/28, other images rejected 120/120 |
 | 3D brain tumor U-Net | 24 held-out BraTS 2023 scans (whole volumes) | **Dice 0.88 / 0.89 / 0.86** (whole tumor / core / enhancing) |
+| 3D lung nodule U-Net (experimental) | 60 held-out LIDC-IDRI CTs (73 nodules); 20 of them through the full app | Dice 0.36, nodules found 51% (app: 56%), 1.2 false spots per CT (app: 0.95); the largest nodule found in 8 of 10 patients |
 
 <details>
 <summary>Figures: confusion matrix, Grad-CAM and outline examples</summary>
@@ -140,10 +141,9 @@ Brain tumor outlines (held-out Figshare patients) and breast lesion outlines (BU
 - **2D brain outlines (single JPG/PNG images) are missing on about a third of tumors in the end-to-end test.** The outline model is trained on Figshare (contrast-enhanced T1), normal brains and BraTS slices in all three views and sequences; it now outlines 84% of gliomas and 90% of meningiomas, but misses most small pituitary tumors (23% outlined). When the classifier finds a tumor that isn't outlined, the result is flagged and the heatmap shows its approximate location; no size is invented. With full 3D MRI (four sequences) the 3D model is used instead and is far more accurate (Dice 0.88).
 - **The classifier guides the outline.** When the classifier is confident a scan is normal (above 80%), no outline is reported and a note explains why. For brain, when it is confident a tumor is present, a lower threshold extends the outline the model already found. Both rules were checked against expert masks and only kept where they helped.
 - **Breast normals:** about 10% still get a small outline. BUS-UCLM images (a different scanner) remain the hardest: 52% of malignant lesions recognised.
-- **Lung CT is not switched on yet.** The app side is ready (3D nodule finder, per-nodule sizes, size-based Lung-RADS, lungs in the 3D view), and a 3D model is being trained on all 641 LIDC-IDRI CTs. Models that were trained and *not* shipped, measured on held-out patients:
+- **Lung CT is experimental.** A 3D U-Net trained on LIDC-IDRI CTs (on a free Kaggle GPU, [`notebooks/train_lung3d_only.ipynb`](notebooks/train_lung3d_only.ipynb)) finds the nodules, measures each one and gives a size-based Lung-RADS category. Through the app on 20 held-out patients it found 56% of the 27 nodules radiologists marked and the largest nodule in 8 of 10 patients, with about one false spot per CT. Every lung result is flagged for expert review, and "no nodule found" does not rule nodules out. It does not tell benign from malignant. Models that were trained and *not* shipped, measured on held-out patients:
   - a 2D nodule finder applied slice by slice to 20 held-out CTs found 69–88% of nodules but marked 17–78 false spots per scan, depending on settings (single slices cannot tell nodules from blood vessels);
   - a 3D benign-vs-malignant nodule classifier reached AUC 0.70 and recognised 0 of 10 malignant patients at its chosen threshold (the LIDC mirror only gives a benign/malignant label per patient, not per nodule).
-  Until the 3D model is in, lung CTs are recognised and refused with a clear message.
 - Review-flag thresholds were calibrated on these same held-out sets. Confidence below 70% or MC-dropout spread above 0.08 flags about 70% of breast errors and 30% of brain errors, while flagging only 10% and 2% of correct answers. Brain errors are mostly confident glioma ↔ meningioma confusions.
 - Public datasets are curated. Real-world scans (other scanners, protocols, populations) will usually score lower.
 
@@ -223,9 +223,11 @@ weights/               trained models (float16)
 |---|---|---|
 | GET | `/api/health` | Mode, loaded models and their metrics, LLM status |
 | POST | `/api/analyze` | Upload files (`files`, optional `sequences`, `scan_type`, `patient_label`, `scan_date`, `pixel_spacing_mm`) |
+| GET, POST | `/api/samples`, `/api/samples/{key}` | List the bundled sample scans; analyze one with a single click |
 | GET | `/api/studies`, `/api/studies/{id}` | Study results |
 | GET | `/api/studies/{id}/slice/{z}.png?layer=overlay\|heatmap\|uncertainty\|original&sequence=flair` | Rendered slice |
 | GET | `/api/studies/{id}/mesh` | 3D surfaces |
+| GET | `/api/studies/{id}/probe?slice&row&col` | Plain-language explanation of one point (hover) |
 | GET | `/api/studies/{id}/compare/{other}` | Longitudinal comparison |
 | GET | `/api/patients/{id}/timeline` | Size over time |
 | GET | `/api/studies/{id}/report.pdf?audience=doctor\|patient` | PDF report |

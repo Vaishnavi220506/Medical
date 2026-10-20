@@ -9,3 +9,4 @@ services:
     volumes:
       - ./data:/app/data        # studies database and images
       - ./weights:/app/weights  # trained model checkpoints
+      - ./samples:/app/samples:ro  # one-click sample scans

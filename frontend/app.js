@@ -127,17 +127,56 @@ function setupUpload() {
   });
 }
 
+// ------------------------------------------------------------------ sample scans
+async function loadSamples() {
+  const samples = await api("/api/samples");
+  if (!samples.length) return;
+  const icon = { brain: "🧠", breast: "🎗️", lung: "🫁" };
+  $("#samples").innerHTML = samples.map((s) => `
+    <button class="sample-card" data-sample="${esc(s.key)}" title="Analyze this sample scan">
+      ${s.volume
+        ? `<span class="sample-thumb volume">${icon[s.organ] || "🩻"}<em>3D</em></span>`
+        : `<img class="sample-thumb" src="/api/samples/${esc(s.key)}/thumb" alt="" loading="lazy">`}
+      <span class="sample-title">${esc(s.title)}</span>
+      <span class="sample-sub">${esc(s.subtitle)}</span>
+    </button>`).join("");
+  $("#samples-box").hidden = false;
+  $("#samples").addEventListener("click", (e) => {
+    const card = e.target.closest("[data-sample]");
+    if (card && !state.busy) analyzeSample(samples.find((s) => s.key === card.dataset.sample));
+  });
+}
+
+async function analyzeSample(sample) {
+  state.busy = true;
+  renderFileList();
+  showAnalyzing(sample.volume ? [{ name: "scan.nii.gz" }] : [], sample.volume ? null : `/api/samples/${sample.key}/thumb`);
+  try {
+    const study = await api(`/api/samples/${encodeURIComponent(sample.key)}`, { method: "POST" });
+    await loadPatients();
+    openStudy(study);
+  } catch (err) {
+    $("#upload-msg").textContent = `Error: ${err.message}`;
+    if (!state.study) $("#empty").hidden = false;
+    else $("#study").hidden = false;
+  } finally {
+    hideAnalyzing();
+    state.busy = false;
+    renderFileList();
+  }
+}
+
 // ------------------------------------------------------------------ analysis animation
 const STEPS = ["Reading and de-identifying the scan", "Detecting the scan type", "Outlining the tumor", "Classifying the tumor type",
   "Estimating uncertainty", "Building the AI heatmap", "Measuring size and location"];
 let stepTimer = null;
 
-function showAnalyzing(files) {
+function showAnalyzing(files, thumb = null) {
   const image = files.find((f) => /\.(png|jpe?g|bmp|webp)$/i.test(f.name));
   const box = $("#analyzing");
   const preview = $("#analyzing-preview");
-  preview.innerHTML = image
-    ? `<img src="${URL.createObjectURL(image)}" alt="Uploaded scan">`
+  preview.innerHTML = thumb || image
+    ? `<img src="${thumb || URL.createObjectURL(image)}" alt="Uploaded scan">`
     : `<div class="volume-icon">${files.length > 1 ? `${files.length} files<br>3D / multi-sequence scan` : "3D scan"}</div>`;
   $("#empty").hidden = true;
   $("#study").hidden = true;
@@ -158,7 +197,7 @@ function showAnalyzing(files) {
 function hideAnalyzing() {
   clearInterval(stepTimer);
   const img = $("#analyzing-preview img");
-  if (img) URL.revokeObjectURL(img.src);
+  if (img?.src.startsWith("blob:")) URL.revokeObjectURL(img.src);
   $("#analyzing").hidden = true;
 }
 
@@ -235,7 +274,7 @@ function renderClassification(s) {
   $("#classification-card").innerHTML = `
     <h3>AI result</h3>
     <div class="big-label">${esc(c.display)}</div>
-    <span class="method">${c.method !== "model" ? "heuristic (demo)" : s.segmentation.model === "3d" ? "3D model (all MRI types)" : "trained classifier"}</span>
+    <span class="method">${c.method !== "model" ? "heuristic (demo)" : s.segmentation.model === "3d" ? (s.profile.organ === "brain" ? "3D model (all MRI types)" : "3D model (whole scan)") : "trained classifier"}</span>
     <div class="bars">${probs.map(([k, v], i) => `
       <div class="bar ${i === 0 ? "top" : ""}"><span>${esc(k.replace("_", " "))}</span>
         <div class="track"><div class="fill" style="width:${(v * 100).toFixed(1)}%"></div></div><span>${pct(v)}</span></div>`).join("")}
@@ -308,7 +347,7 @@ function renderScanInfo(s) {
     ["Sequences", sc.sequences.join(", ")],
     ["Scan type detection", `${s.route.method} (${pct(s.route.confidence)}): ${s.route.reason}`],
   ];
-  const outlineModels = { "3d": s.profile.organ === "lung" ? "3D U-Net (whole CT, lungs)" : "3D U-Net (whole volume, all MRI types)", "multi-sequence": "2D U-Net on all MRI types (BraTS)", "single-image": "2D U-Net (single image)" };
+  const outlineModels = { "3d": { lung: "3D U-Net (whole CT, lungs)", brain: "3D U-Net (whole volume, all MRI types)" }[s.profile.organ] || "3D U-Net (whole volume)", "multi-sequence": "2D U-Net on all MRI types (BraTS)", "single-image": "2D U-Net (single image)" };
   if (s.segmentation.model) rows.push(["Outline model", outlineModels[s.segmentation.model] || s.segmentation.model]);
   if (sc.spacing_mm) rows.push(["Voxel size (mm)", sc.spacing_mm.map((v) => v.toFixed(2)).join(" × ") + (sc.spacing_estimated ? " (estimated)" : "")]);
   if (sc.removed_phi?.length) rows.push(["Privacy", `Removed ${sc.removed_phi.length} identifying DICOM field(s)`]);
@@ -731,3 +770,4 @@ setup3D();
 setupChat();
 loadStatus().catch((err) => { $("#status").innerHTML = `<span class="pill warn">Backend unreachable: ${esc(err.message)}</span>`; });
 loadPatients().catch(() => {});
+loadSamples().catch(() => {});
