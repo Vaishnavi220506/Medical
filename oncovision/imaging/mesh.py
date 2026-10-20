@@ -38,28 +38,44 @@ def _body(vol: np.ndarray) -> np.ndarray:
 
 
 def _breasts(body: np.ndarray, sp) -> tuple[np.ndarray, str]:
-    """Breast MRI anatomy: the breasts on a thin base of the chest wall.
+    """Breast MRI anatomy: both breasts as smooth domes on a thin, rounded base of chest wall.
 
-    ``body`` comes from _body: per-slice masks are ragged (fat and glands vary a lot in brightness).
-    When the scan shows the whole chest (both breasts), on each axial slice the chest wall is the
-    first row (from the front, row 0) where the body is nearly as wide as the torso; the tissue in
-    front of it is kept, plus a few rows of the chest wall as a base. Scans of one breast only keep
-    the whole scanned region.
+    ``body`` comes from _body. When the scan shows the whole chest (both breasts), the chest wall
+    is one row for the whole scan (median over axial slices of the first row, from the front,
+    where the body is nearly as wide as the torso). How far the breast tissue stands out in front
+    of it is a height map over the chest (slice x column); smoothing that map gives the breasts'
+    natural rounded surface without the ragged edges of fat and glands on MRI. Scans of one breast
+    only keep the whole scanned region.
     """
     if body.shape[2] * sp[2] < 280:  # one breast only (see measure.ONE_BREAST_FOV_MM)
         return body, "Breast (scanned area)"
-    # One chest-wall row for the whole scan (median over slices): a per-slice wall jumps between
-    # slices and gives a jagged, hooked back in the side view. A few rows behind it form the base.
     walls = []
     for s in body:
         widths = s.sum(axis=1)
         if widths.max() > 0:
             walls.append(np.where(widths >= 0.85 * widths.max())[0][0])
-    breasts = np.zeros_like(body)
-    if walls:
-        wall = int(np.median(walls)) + 4
-        breasts[:, :wall] = body[:, :wall]
-    breasts = ndimage.binary_opening(breasts, iterations=2)
+    if not walls:
+        return body, "Breast (scanned area)"
+    wall = int(np.median(walls))
+    # Height of the tissue in front of the wall (mm), counted from the wall forward without gaps.
+    height = body[:, :wall][:, ::-1].cumprod(axis=1).sum(axis=1) * sp[1]
+    height = ndimage.gaussian_filter(height, (6 / sp[0], 6 / sp[2]))  # ~6 mm smoothing
+    # Round off the breasts where the scan stops above and below them (instead of a flat cut).
+    n = body.shape[0]
+    to_edge = np.minimum(np.arange(n), n - 1 - np.arange(n)) * sp[0]
+    t = np.clip(to_edge / 30.0, 0, 1)[:, None]  # zero at the scan's top and bottom, full 30 mm in
+    height *= np.sqrt(1 - (1 - t) ** 2)
+    # Thin chest-wall base where the body is, cut to a rounded (super-elliptic) outline.
+    chest = body[:, wall].copy()
+    zs, xs = np.nonzero(chest)
+    if zs.size:
+        zc, xc = (zs.min() + zs.max()) / 2, (xs.min() + xs.max()) / 2
+        rz, rx = (zs.max() - zs.min()) / 2 + 1, (xs.max() - xs.min()) / 2 + 1
+        zz, xx = np.ogrid[: chest.shape[0], : chest.shape[1]]
+        chest &= np.abs((zz - zc) / rz) ** 2.5 + np.abs((xx - xc) / rx) ** 2.5 <= 1
+    base = np.where(chest, 12.0, 0.0)  # mm: about the depth of the chest muscles
+    depth = (wall - np.arange(body.shape[1]))[None, :, None] * sp[1]  # mm in front of the wall (row axis)
+    breasts = (depth <= height[:, None, :]) & (depth >= -base[:, None, :]) & chest[:, None, :]
     return (breasts, "Breasts") if breasts.sum() > 1000 else (body, "Breast (scanned area)")
 
 
