@@ -99,9 +99,12 @@ For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.
 
 ### Interactive 3D
 
-**[▶ Open the live 3D demo](https://vaishnavi220506.github.io/Medical/docs/demo/)**: rotate and zoom a held-out BraTS patient and hover over the brain or the tumor for plain-language explanations (what each tumor part is, which brain area you are on, what it does and how far the tumor is).
+**[▶ Open the live 3D demo](https://vaishnavi220506.github.io/Medical/docs/demo/)**: held-out patients for brain MRI and breast MRI (lung CT follows). Rotate, zoom and hover over the organ or the tumor for plain-language explanations: what each tumor part is, which area you are on, what it does and how far the tumor is.
 
-![3D view of a held-out BraTS patient rotating: glowing brain shell, necrotic core (red), enhancing tumor (blue), edema (yellow)](docs/results/3d_view.gif)
+| Brain MRI (BraTS 2023) | Breast MRI (MAMA-MIA, Duke) |
+|---|---|
+| ![Brain: glowing brain, necrotic core (red), active tumor (blue), edema (yellow)](docs/results/3d_view.gif) | ![Breast: both breasts, the cancer in the right breast and a small false alarm in the left](docs/results/3d_breast.gif) |
+| Necrotic core, edema and active tumor, outlined from four MRI sequences | The cancer (right breast); the small spot in the left breast is a false alarm by the model |
 
 3D model files you can open in GitHub's viewer or any 3D program: [brain and tumor](docs/results/brain_and_tumor_3d.stl) · [tumor only](docs/results/tumor_3d.stl).
 

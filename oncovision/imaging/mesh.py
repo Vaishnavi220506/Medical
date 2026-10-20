@@ -27,6 +27,38 @@ def _surface(mask: np.ndarray, spacing, step: int = 1, sigma: float = 1.0) -> di
     return {"vertices": np.round(verts, 2).ravel().tolist(), "faces": faces.astype(int).ravel().tolist()}
 
 
+def _breasts(vol: np.ndarray, sp) -> tuple[np.ndarray, str]:
+    """Breast MRI anatomy: the breasts as they stand out in front of the chest wall.
+
+    Per-slice masks are ragged (fat and glands vary a lot in brightness), so the body is the
+    largest 3D region of the smoothed scan, closed into one shell. When the scan shows the whole
+    chest (both breasts), only tissue in front of the chest wall is kept: on each axial slice the
+    chest wall is the first row (from the front, row 0) where the body is nearly as wide as the
+    torso. Scans of one breast only keep the whole scanned region.
+    """
+    body = ndimage.gaussian_filter(vol, 1.5) > 0.08
+    comp, n = ndimage.label(body)
+    if n:
+        body = comp == (np.argmax(ndimage.sum(body, comp, range(1, n + 1))) + 1)
+    body = ndimage.binary_closing(np.pad(body, 3), iterations=3)[3:-3, 3:-3, 3:-3]
+    body = np.stack([ndimage.binary_fill_holes(s) for s in body])
+    if body.shape[2] * sp[2] < 280:  # one breast only (see measure.ONE_BREAST_FOV_MM)
+        return body, "Breast (scanned area)"
+    # One chest-wall row for the whole scan (median over slices), so slices above and below the
+    # breasts, where the body does not reach in front of it, add nothing and the breasts taper off.
+    walls = []
+    for s in body:
+        widths = s.sum(axis=1)
+        if widths.max() > 0:
+            walls.append(np.where(widths >= 0.85 * widths.max())[0][0])
+    breasts = np.zeros_like(body)
+    if walls:
+        wall = int(np.median(walls))
+        breasts[:, :wall] = body[:, :wall]
+    breasts = ndimage.binary_opening(breasts, iterations=2)
+    return (breasts, "Breasts") if breasts.sum() > 1000 else (body, "Breast (scanned area)")
+
+
 def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile, spacing) -> dict:
     """Meshes of the body outline (head) and each tumor sub-region, in mm (z, y, x order)."""
     spacing = tuple(spacing) if spacing else (1.0, 1.0, 1.0)
@@ -45,10 +77,12 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
     lungs = lung_mask(vol) if profile.organ == "lung" else None
     if lungs is not None and lungs.any():  # chest CT: show the lungs, not the outer body shell
         anatomy, out["anatomy_label"] = lungs, "Lungs"
+    elif profile.organ == "breast":
+        anatomy, out["anatomy_label"] = _breasts(vol, sp)
     else:
         anatomy = ndimage.binary_fill_holes(np.stack([foreground_mask(s) for s in vol]))
         out["anatomy_label"] = "Brain / head" if profile.organ == "brain" else "Body outline"
-    surface = _surface(anatomy, sp, step=2, sigma=1.6)
+    surface = _surface(anatomy, sp, step=2, sigma=2.5 if profile.organ == "breast" else 1.6)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
     for lbl in profile.display_labels:
