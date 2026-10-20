@@ -17,6 +17,10 @@ from ..utils import plain
 from .preprocess import foreground_mask, normalize
 
 
+# Breast MRI narrower than this shows only one breast (both breasts need about 300 mm or more).
+ONE_BREAST_FOV_MM = 280
+
+
 def _diameters(mask2d: np.ndarray, dy: float, dx: float) -> tuple[float, float]:
     """Longest diameter and longest perpendicular diameter of a 2D mask, in mm (or px)."""
     ys, xs = np.nonzero(mask2d)
@@ -124,7 +128,11 @@ def measure(
         col_frac = (cx - cols[0]) / max(cols[-1] - cols[0], 1)
         offset = (cx - midline) * dx
         location: dict = {}
-        if profile.modality != "Ultrasound":  # an ultrasound image has no patient midline
+        # Breast MRI showing only one breast (many ISPY scans): its centre is not the body's midline.
+        one_breast = profile.organ == "breast" and profile.modality == "MRI" and labels.shape[2] * dx < ONE_BREAST_FOV_MM
+        if one_breast:
+            location["field_of_view"] = "one breast only (left or right cannot be told from this scan)"
+        elif profile.modality != "Ultrasound":  # an ultrasound image has no patient midline
             location["distance_from_midline"] = round(abs(offset), 1)
             if abs(offset) < 0.04 * (cols[-1] - cols[0]) * dx:
                 location["side"] = "midline"

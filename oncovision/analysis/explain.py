@@ -16,6 +16,7 @@ import numpy as np
 from scipy import ndimage
 
 from ..imaging.lung import lung_mask
+from ..imaging.measure import ONE_BREAST_FOV_MM
 from ..imaging.preprocess import foreground_mask, normalize
 from ..models.registry import get_profile
 
@@ -139,7 +140,7 @@ def _brain_area(z: float, r: float, c: float, box, is_3d: bool) -> str:
     return "parietal lobe"
 
 
-def _area(profile, z: float, r: float, c: float, box, is_3d: bool) -> tuple[str, str]:
+def _area(profile, z: float, r: float, c: float, box, is_3d: bool, width_mm: float | None = None) -> tuple[str, str]:
     """(area name, what it does) for a point inside the organ."""
     if box is None:
         return "this area", ""
@@ -164,6 +165,8 @@ def _area(profile, z: float, r: float, c: float, box, is_3d: bool) -> tuple[str,
         return f"{side} lung, {zone} zone (approx.)", "air exchange: oxygen in, carbon dioxide out" + extra
     if profile.modality == "Ultrasound":
         return "breast tissue in the ultrasound image", "the image shows a slice from the skin (top) inwards"
+    if width_mm is not None and width_mm < ONE_BREAST_FOV_MM:  # only one breast in the scan
+        return "breast tissue (one breast in this scan; side not known)", "breast tissue: milk glands, ducts and fat"
     # Breast MRI: which breast, and quadrant from position within that breast.
     half = (box[2][0], mid) if side == "right" else (mid, box[2][1])
     outer = abs(_frac(c, half) - (0.0 if side == "right" else 1.0)) < 0.4  # far from the midline
@@ -218,7 +221,8 @@ def explain_point(study: dict, version: str, z: int, r: int, c: int) -> dict:
     if not organ[z, r, c] and profile.organ == "brain":
         out.update({"kind": "outside", "title": "Outside the brain", "what": "Skull, scalp or background.", "effect": ""})
         return out
-    name, function = _area(profile, z, r, c, box, is_3d)
+    width_mm = cmax * spacing[2] if spacing else None
+    name, function = _area(profile, z, r, c, box, is_3d, width_mm)
     lobe = profile.organ == "brain" and is_3d
     out.update({"kind": "area", "title": name[0].upper() + name[1:], "what": f"Responsible for {function}." if function and lobe else (function[0].upper() + function[1:] + "." if function else "")})
     dist, step = _distance_map(study["id"], version, spacing)

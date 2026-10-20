@@ -272,6 +272,7 @@ function renderMeasurements(s) {
   if (m.craniocaudal_extent) rows.push(["Top-to-bottom extent", `${m.craniocaudal_extent} ${u}`]);
   const loc = m.location || {};
   if (loc.side) rows.push(["Side", loc.side]);
+  if (loc.field_of_view) rows.push(["Field of view", loc.field_of_view]);
   if (loc.approximate_region) rows.push(["Approximate region", loc.approximate_region]);
   if (loc.depth_from_skin != null) rows.push(["Depth from skin", `${loc.depth_from_skin} ${u}`]);
   if (loc.distance_from_midline != null) rows.push(["Distance from midline", `${loc.distance_from_midline} ${u}`]);
