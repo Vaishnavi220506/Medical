@@ -59,6 +59,8 @@ class CancerProfile:
     # (in voxels) it reports, for scans analyzed by a 3D model (classify_from_3d).
     detection_display: str = "Tumor detected (3D model; tumor type not classified)"
     detection_min_voxels: int = 200
+    # A review reason added to every result of this scan type (for experimental models).
+    always_review: str = ""
     datasets: tuple[str, ...] = field(default_factory=tuple)
 
     @property
@@ -153,7 +155,7 @@ PROFILES: dict[str, CancerProfile] = {
         modality="CT",
         classes=("normal", "benign", "malignant"),
         class_descriptions={
-            "normal": "No nodule detected",
+            "normal": "No nodule detected (the model misses about half of nodules; this does not rule them out)",
             "benign": "Benign-appearing nodule",
             "malignant": "Nodule with malignant features",
         },
@@ -165,6 +167,11 @@ PROFILES: dict[str, CancerProfile] = {
         reporting_system="Lung-RADS",
         detection_display="Lung nodule found (it does not tell benign from malignant)",
         detection_min_voxels=10,  # the 3D lung model also drops findings under 3 mm
+        # Held-out LIDC patients: about half of the nodules found, about 1 false spot per scan.
+        always_review=(
+            "Experimental lung model: it finds about half of the nodules that radiologists mark, and about one "
+            "spot per scan is a false alarm. A result without nodules does not rule nodules out."
+        ),
         datasets=("LIDC-IDRI (641 chest CTs with nodule outlines)",),
     ),
 }

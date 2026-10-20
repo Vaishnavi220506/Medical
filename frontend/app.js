@@ -258,7 +258,9 @@ function renderMeasurements(s) {
   const m = s.measurements;
   const note = s.segmentation.note ? `<p class="hint">${esc(s.segmentation.note)}</p>` : "";
   if (!m.detected) {
-    const nothing = s.profile.organ === "lung" ? "No lung nodule of 3 mm or more was found." : "No tumor region was outlined.";
+    const nothing = s.profile.organ === "lung"
+      ? "The AI found no lung nodule of 3 mm or more. It misses about half of nodules, so this does not rule them out."
+      : "No tumor region was outlined.";
     $("#measurements-card").innerHTML = `<h3>Measurements</h3><p class="muted">${nothing}</p>${note}`;
     return;
   }

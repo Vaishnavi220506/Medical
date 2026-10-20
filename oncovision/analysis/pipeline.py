@@ -79,6 +79,8 @@ def _review_reasons(route: RouteResult, cls, seg, measurements: dict, lesion_unc
             "(it was trained mostly on contrast-enhanced T1 slices), so there are no size measurements. The AI heatmap "
             "shows the approximate location."
         )
+    if profile.always_review:
+        reasons.append(profile.always_review)
     return reasons
 
 
