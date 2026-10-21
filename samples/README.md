@@ -34,8 +34,9 @@ Two breast cancer patients from the MAMA-MIA collection (first contrast-enhanced
 |---|---|
 | `patient1_ISPY2_943633.nii.gz` | A tumor of about 7 cm³ (the model's outline matches the expert one with Dice 0.93) |
 | `patient2_ISPY2_986734.nii.gz` | A larger tumor of about 28 cm³ (Dice 0.85) |
+| `patient3_DUKE_592_both_breasts.nii.gz` | A scan of **both breasts** (Duke cohort), with the cancer in the right breast (about 27 cm³). The 3D view shows it inside the drawn breast anatomy; the model also marks a false alarm in the left breast. This is the "Breast MRI, 3D" sample card on the start page. |
 
-**How to try it:** drag one file into the upload box and click **Analyze** (scan type: Auto-detect). It is recognised as breast MRI and the 3D model outlines the tumor; open the **3D** tab and hover over it. These ISPY2 scans show only one breast, so the app does not say left or right.
+**How to try it:** drag one file into the upload box and click **Analyze** (scan type: Auto-detect). It is recognised as breast MRI and the 3D model outlines the tumor; open the **3D** tab and hover over it. The ISPY2 scans show only one breast, so the app does not say left or right for them (and the 3D view shows the scanned area instead of the drawn anatomy).
 
 **Source and license:** MAMA-MIA (L. Garrucho et al., Scientific Data 12, 453, 2025), via https://huggingface.co/datasets/YongchengYAO/MAMA-MIA-Lite, **CC BY-NC 4.0: non-commercial use only**. The original ISPY2 data come from The Cancer Imaging Archive.
 
