@@ -161,29 +161,54 @@ def _breast_figure(vol: np.ndarray, body: np.ndarray, lab: np.ndarray, sp) -> di
     zz, rr, cc = np.meshgrid(np.arange(n) * sp[0], np.arange(h) * sp[1], np.arange(w) * sp[2], indexing="ij")
     torso = _torso_sdf(to_body(np.stack([zz, rr, cc], -1)), k)
 
-    # The breasts: where the tissue clearly stands out (the chest's flanks in front of the wall
-    # line are left to the illustrated body), reaching back into the body.
+    # Where the breasts are: footprint (seen from the front) of the tissue that clearly stands out.
     depth = (wall - np.arange(h))[None, :, None] * sp[1]  # mm in front of the wall
     domes = (depth <= height[:, None, :]) & (depth >= -60) & (height[:, None, :] > max(8.0, 0.2 * height.max()))
-    sd_breast = (ndimage.distance_transform_edt(~domes, sampling=sp) - ndimage.distance_transform_edt(domes, sampling=sp))
-    blend = 30 * k  # mm: how softly the breasts join the chest
-    breasts = (_smin(torso, sd_breast, blend) < 0) & (torso > -3)  # in front of the body, a little overlap
-    if breasts.sum() < 1000:
+    footprint = height > max(8.0, 0.2 * height.max())
+    tumor = lab > 0
+    shapes = []  # per breast: centre (up, anterior, lateral) and radii (vertical, depth, lateral), mm
+    for side in (np.arange(w) < centre_col, np.arange(w) >= centre_col):
+        zs, cs = np.nonzero(footprint & side[None, :])
+        if zs.size < 20:
+            continue
+        radius = float(np.clip(np.sqrt(zs.size * sp[0] * sp[2] / np.pi), 45 * k, 85 * k))
+        y_c, x_c = up * (zs.mean() * sp[0] - origin[0]), cs.mean() * sp[2] - origin[2]
+        # Chest surface of the illustrated body in front of this point.
+        a_line = np.arange(60, -160, -1.0)
+        line = _torso_sdf(np.stack([np.full_like(a_line, y_c), a_line, np.full_like(a_line, x_c)], -1), k)
+        a_surface = a_line[np.argmax(line < 0)]
+        centre = np.array([y_c - 0.08 * radius, a_surface - 0.2 * radius, x_c])
+        reach = 0.95 * radius  # how far the breast stands out, as in anatomy illustrations
+        t_side = tumor & side[None, None, :]
+        if t_side.any():  # keep the patient's tumor inside the drawn breast
+            t_front = origin[1] - np.argwhere(t_side)[:, 1].min() * sp[1]
+            reach = max(reach, t_front - centre[1] + 10)
+        shapes.append((centre, np.array([0.95 * radius, reach, radius])))
+    if not shapes:
         return None
 
-    # Body = illustrated torso joined smoothly with the patient's breasts.
+    def breast_sdf(p):  # union of round breasts, as in anatomy illustrations
+        return np.min([_sd_ellipsoid(p, c, r) for c, r in shapes], axis=0)
+
+    scan_pts = to_body(np.stack([zz, rr, cc], -1))
+    blend = 22 * k  # mm: how softly the breasts join the chest
+    breasts = (breast_sdf(scan_pts) < 0) & (torso > -3)
+    if breasts.sum() < 500:
+        return None
+
+    # Body = illustrated torso with the breasts.
     step = 7.0 * k
-    ys, as_, xs = (np.arange(lo, hi, step) for lo, hi in ((-400 * k, 390 * k), (-230 * k, 120 * k), (-310 * k, 310 * k)))
+    ys, as_, xs = (np.arange(lo, hi, step) for lo, hi in ((-400 * k, 390 * k), (-230 * k, 160 * k), (-310 * k, 310 * k)))
     grid = np.stack(np.meshgrid(ys, as_, xs, indexing="ij"), -1)
-    scan = np.stack([origin[0] + up * grid[..., 0], origin[1] - grid[..., 1], origin[2] + grid[..., 2]], -1)  # mm
-    idx = [scan[..., i] / sp[i] for i in range(3)]
-    sd_b = ndimage.map_coordinates(sd_breast.astype(np.float32), idx, order=1, mode="constant", cval=1e3)
-    sdf = _smin(_torso_sdf(grid, k), sd_b, blend)
+    sdf = _smin(_torso_sdf(grid, k), breast_sdf(grid), blend)
+
+    def to_scan(v):  # (up, anterior, lateral) mm -> (slice, row, col) mm
+        return np.stack([origin[0] + up * v[:, 0], origin[1] - v[:, 1], origin[2] + v[:, 2]], -1)
+
     figure = None
     try:
         verts, faces, _, _ = marching_cubes(-sdf, level=0.0, spacing=(step, step, step))
-        verts += np.array([ys[0], as_[0], xs[0]])
-        verts = np.stack([origin[0] + up * verts[:, 0], origin[1] - verts[:, 1], origin[2] + verts[:, 2]], -1)
+        verts = to_scan(verts + np.array([ys[0], as_[0], xs[0]]))
         figure = {"vertices": np.round(verts, 1).ravel().tolist(), "faces": faces.astype(int).ravel().tolist()}
     except (ValueError, RuntimeError):
         pass
@@ -192,7 +217,7 @@ def _breast_figure(vol: np.ndarray, body: np.ndarray, lab: np.ndarray, sp) -> di
     # breast tissue, away from the skin and outside the tumor. Approximate, from brightness alone.
     from skimage.filters import threshold_otsu
 
-    inner = ndimage.binary_erosion(domes & breasts & body, iterations=2) & ~ndimage.binary_dilation(lab > 0, iterations=1)
+    inner = ndimage.binary_erosion(domes & body, iterations=2) & ~ndimage.binary_dilation(tumor, iterations=1)
     glands = None
     if inner.sum() > 500:
         smooth = ndimage.gaussian_filter(vol, 0.7)
@@ -203,69 +228,23 @@ def _breast_figure(vol: np.ndarray, body: np.ndarray, lab: np.ndarray, sp) -> di
         if count:
             sizes = ndimage.sum(glands, comp, range(1, count + 1))
             glands = np.isin(comp, np.where(sizes >= 6)[0] + 1)
-    lobes = _milk_lobes(breasts, wall, centre_col, sp)
-    return {"breasts": breasts, "figure": figure, "glands": glands, "lobes": lobes, "flip": up < 0}
+    # Each breast for the anatomy drawn in the browser: centre in scan mm (slice, row, col), radii
+    # (up-down, front-back, sideways) in mm and which way is lateral (+1: towards higher columns).
+    drawn = [{"centre": [round(float(v), 1) for v in to_scan(c[None])[0]], "radii": [round(float(v), 1) for v in r],
+              "lateral": 1 if c[2] > 0 else -1} for c, r in shapes]
+    return {"breasts": breasts, "figure": figure, "glands": glands, "shapes": drawn, "flip": up < 0}
 
 
-def _milk_lobes(breasts: np.ndarray, wall: int, centre_col: float, sp) -> dict | None:
-    """Illustrated milk lobes in each breast: petal-shaped lobes fanning out from the nipple
-    towards the chest, as in anatomy drawings (MRI cannot show single lobes). In mm, (slice, row, col).
-    """
-    sd = ndimage.distance_transform_edt(~breasts, sampling=sp) - ndimage.distance_transform_edt(breasts, sampling=sp)
-    verts_all, faces_all, offset = [], [], 0
-    cols = np.arange(breasts.shape[2])
-    for side in (cols < centre_col, cols >= centre_col):
-        dome = breasts & side[None, None, :]
-        if dome.sum() < 200:
-            continue
-        idx = np.argwhere(dome) * np.asarray(sp)  # mm
-        front = idx[idx[:, 1] <= idx[:, 1].min() + 3 * sp[1]]
-        nipple = front.mean(axis=0)
-        base = idx[idx[:, 1] >= (wall - 2) * sp[1]]
-        base = base.mean(axis=0) if len(base) else idx.mean(axis=0)
-        axis = base - nipple
-        length = np.linalg.norm(axis)
-        if length < 15:
-            continue
-        axis /= length
-        u = np.cross(axis, [0, 0, 1.0])
-        u = u / np.linalg.norm(u) if np.linalg.norm(u) > 1e-6 else np.array([1.0, 0, 0])
-        v = np.cross(axis, u)
-        footprint = dome.any(axis=1).sum() * sp[0] * sp[2]  # mm^2 seen from the front
-        radius = 0.62 * np.sqrt(footprint / np.pi)
-        n = 14
-        segments = []
-        for i in range(n):
-            phi = 2 * np.pi * (i + 0.5 * (side[0])) / n
-            out = u * np.cos(phi) + v * np.sin(phi)
-            start = nipple + axis * 0.08 * length + out * 0.04 * radius
-            end = nipple + axis * 0.5 * length + out * radius
-            segments.append((start, end))
-        tip = max(4.0, 0.9 * np.pi * radius / n)
-        step = 2.0
-        lo = idx.min(axis=0) - 4
-        hi = idx.max(axis=0) + 4
-        axes_ = [np.arange(a, b, step) for a, b in zip(lo, hi)]
-        grid = np.stack(np.meshgrid(*axes_, indexing="ij"), -1)
-        d = np.full(grid.shape[:3], 1e3, np.float32)
-        for a, b in segments:
-            ba = b - a
-            t = np.clip(((grid - a) @ ba) / (ba @ ba), 0, 1)
-            dist = np.linalg.norm(grid - a - t[..., None] * ba, axis=-1)
-            d = np.minimum(d, dist - (1.5 + (tip - 1.5) * np.sin(np.pi * np.clip(t, 0, 1) * 0.62)))  # petal: thin at the nipple
-        inside = ndimage.map_coordinates(sd.astype(np.float32), [grid[..., i] / sp[i] for i in range(3)], order=1, mode="constant", cval=1e3)
-        d = np.maximum(d, inside + 4)  # keep 4 mm inside the skin
-        try:
-            verts, faces, _, _ = marching_cubes(-d, level=0.0, spacing=(step,) * 3)
-        except (ValueError, RuntimeError):
-            continue
-        verts_all.append(verts + lo)
-        faces_all.append(faces + offset)
-        offset += len(verts)
-    if not verts_all:
-        return None
-    return {"vertices": np.round(np.concatenate(verts_all), 1).ravel().tolist(),
-            "faces": np.concatenate(faces_all).astype(int).ravel().tolist()}
+# Breast anatomy drawn in the 3D view around the patient's tumor (names match breast_anatomy.js).
+BREAST_ANATOMY = (
+    ("fat", "Fatty tissue (drawing)", [243, 217, 164]),
+    ("ducts", "Milk ducts (drawing)", [246, 190, 204]),
+    ("lobules", "Lobes and lobules (drawing)", [242, 163, 179]),
+    ("ligaments", "Cooper's ligaments (drawing)", [235, 235, 240]),
+    ("nipple", "Nipple and areola (drawing)", [201, 122, 122]),
+    ("muscle", "Pectoral muscle (drawing)", [168, 50, 58]),
+    ("lymph_nodes", "Axillary lymph nodes (drawing; not assessed)", [143, 166, 140]),
+)
 
 
 def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile, spacing) -> dict:
@@ -304,11 +283,12 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
         if figure["figure"]:
             out["meshes"].append({"name": "body", "description": "Body (illustration for orientation, not from the scan)",
                                   "color": [96, 165, 250], "opacity": 0.1, **figure["figure"]})
-        if figure["lobes"]:
-            out["meshes"].append({"name": "lobes", "description": "Milk lobes (illustration)",
-                                  "color": [236, 140, 170], "opacity": 0.85, **figure["lobes"]})
+        # Breast anatomy drawn by the browser (frontend/breast_anatomy.js) inside each breast.
+        out["breast_shapes"] = figure["shapes"]
+        for name, description, color in BREAST_ANATOMY:
+            out["meshes"].append({"name": name, "description": description, "color": color, "procedural": True})
         surface = _surface(figure["glands"], sp, sigma=0.8) if figure["glands"] is not None else None
-        if surface:  # off at first: the illustrated lobes are shown instead
+        if surface:  # off at first: the drawn anatomy is shown instead
             out["meshes"].append({"name": "glands", "description": "Glandular tissue from the scan (approx., from image brightness)",
                                   "color": [230, 170, 60], "opacity": 0.4, "hidden": True, **surface})
     for lbl in profile.display_labels:

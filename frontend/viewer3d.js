@@ -1,6 +1,8 @@
 // 3D tumor viewer (three.js): glowing "hologram" brain shell, glossy tumor sub-regions,
 // studio lighting, a live slice plane synced with the 2D viewer, cut-away clipping,
 // preset views, auto-rotate and screenshots.
+import { buildBreastAnatomy } from "./breast_anatomy.js";
+
 let viewer = null;
 
 export function disposeViewer() {
@@ -53,7 +55,7 @@ const STYLE = {
   necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
   nodule: { opacity: 1.0, roughness: 0.35, renderOrder: 1 },  // solid and glossy, like the brain tumor parts
   glands: { opacity: 0.4, roughness: 0.8, renderOrder: 1 },  // drawn first: the tumor shows through
-  lobes: { opacity: 0.8, roughness: 0.7, renderOrder: 1 },
+  lobes: { opacity: 0.95, roughness: 0.6, renderOrder: 1 },
 };
 
 // Soft round glow texture for tumors in the illustrated body view.
@@ -128,7 +130,19 @@ export async function renderMeshes(container, data) {
   const figure = data.meshes.some((m) => m.name === "body");
   const cutPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e6);
   const handles = [];
+  const pulse = []; // tumor materials that pulse
+  const reducedMotion = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+  let drawn = null; // breast anatomy drawn in the browser (breast_anatomy.js)
   for (const m of data.meshes) {
+    if (m.procedural) {
+      drawn ??= buildBreastAnatomy(THREE, data.breast_shapes || [], { ySign, cutPlane, reducedMotion });
+      const part = drawn.groups[m.name] || new THREE.Group();
+      part.userData.name = m.name;
+      part.visible = !m.hidden;
+      group.add(part);
+      handles.push(part);
+      continue;
+    }
     const geometry = toGeometry(m);
     let mesh;
     if (m.name === "anatomy" || m.name === "body") {
@@ -140,7 +154,7 @@ export async function renderMeshes(container, data) {
       const material = new THREE.ShaderMaterial({
         uniforms: {
           glowColor: { value: new THREE.Color(body ? 0x60a5fa : figure ? 0x7dd3fc : 0x67e8f9) },
-          strength: { value: body ? 0.8 : figure ? 0.06 : 1.0 },  // breasts: shown by the body's own skin
+          strength: { value: body ? 0.8 : figure ? 0.0 : 1.0 },  // breasts: shown by the body's own skin
           fill: { value: body ? 0.07 : figure ? 0.0 : 0.02 },
           fade: { value: new THREE.Vector3(bb.min.y, bb.max.y, body ? (bb.max.y - bb.min.y) * 0.16 : 0) },
         },
@@ -155,7 +169,7 @@ export async function renderMeshes(container, data) {
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = body ? 11 : 10;
-      mesh.userData.strength = body ? 0.8 : figure ? 0.06 : 1.0;
+      mesh.userData.strength = body ? 0.8 : figure ? 0.0 : 1.0;
     } else {
       const style = STYLE[m.name] || { opacity: m.opacity ?? 0.9, roughness: 0.35, renderOrder: m.opacity < 0.5 ? 4 : 2 };
       const color = new THREE.Color(`rgb(${m.color.join(",")})`);
@@ -178,15 +192,16 @@ export async function renderMeshes(container, data) {
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = style.renderOrder;
       if (m.spots) {
+        pulse.push(material);
         // Tumor: a warm glow around each spot, as in medical illustrations.
         const texture = glowTexture(THREE);
         for (const [sl, row, col, radius] of m.spots) {
           const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: texture, color: 0xff5500, transparent: true, opacity: 1.0,
+            map: texture, color: 0xff5a1a, transparent: true, opacity: 0.7,
             blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
           }));
           halo.position.set(col, ySign * sl, -row);
-          const r = Math.max(radius * 7, 45);
+          const r = Math.max(radius * 4.5, 30);
           halo.scale.set(r, r, 1);
           halo.renderOrder = 20;
           halo.raycast = () => {};
@@ -251,12 +266,13 @@ export async function renderMeshes(container, data) {
   const flyTo = (target, ms = 900) => {
     flight = { from: camera.position.clone(), to: target.clone(), start: performance.now(), ms };
   };
-  camera.position.copy(views.angled).multiplyScalar(1.8);
-  flyTo(views.angled, 1400);
+  const start = figure ? views.front : views.angled;  // the illustrated body opens from the front
+  camera.position.copy(start).multiplyScalar(1.8);
+  flyTo(start, 1400);
 
   // Fade the meshes in on open.
   const born = performance.now();
-  handles.forEach((m) => { if ("opacity" in m.material) { m.material.transparent = true; m.material.opacity = 0; } });
+  handles.forEach((m) => { if (m.material && "opacity" in m.material) { m.material.transparent = true; m.material.opacity = 0; } });
 
   const resize = new ResizeObserver(() => {
     const w = container.clientWidth, h = container.clientHeight;
@@ -301,11 +317,15 @@ export async function renderMeshes(container, data) {
   renderer.domElement.addEventListener("pointerleave", () => { pointer = null; setHover(null); viewer.onHover?.(null); });
   // Tumor parts first, then the organ area (explained like the brain: which part, how far the
   // tumor is), then the drawn milk lobes / scan glands, then the illustrated body.
-  const rank = (name) => ({ body: 4, lobes: 3, glands: 3, anatomy: 2, possible_extent: 1 })[name] ?? 0;
+  const rank = (name) => ({ body: 4, fat: 3, glands: 3, muscle: 2.5, anatomy: 2, ducts: 1.5, lobules: 1.5, ligaments: 1.5,
+    nipple: 1.5, lymph_nodes: 1.5, possible_extent: 1 })[name] ?? 0;
   const glow = (mesh, on) => {
-    if (!mesh) return;
+    if (!mesh?.material) return;
     if (mesh.material.uniforms) mesh.material.uniforms.strength.value = (mesh.userData.strength ?? 1) * (on ? 1.8 : 1.0);
-    else if (mesh.material.emissive) mesh.material.emissiveIntensity = on ? 3.0 : 1.0;
+    else if (mesh.material.emissive) {
+      mesh.material.userData.base ??= mesh.material.emissiveIntensity;
+      mesh.material.emissiveIntensity = mesh.material.userData.base * (on ? 3.0 : 1.0);
+    }
   };
   const setHover = (mesh) => {
     if (mesh === hovered) return;
@@ -317,7 +337,8 @@ export async function renderMeshes(container, data) {
   const pick = () => {
     if (!pointer || pointer.buttons) return;
     raycaster.setFromCamera(ndc, camera);
-    const hits = raycaster.intersectObjects(handles.filter((h) => h.visible), false)
+    const hits = raycaster.intersectObjects(handles.filter((h) => h.visible), true)
+      .filter((h) => h.object.userData.name && h.object.visible)
       .filter((h) => !["anatomy", "body"].includes(h.object.userData.name) || cutPlane.distanceToPoint(h.point) >= 0)
       .sort((a, b) => rank(a.object.userData.name) - rank(b.object.userData.name) || a.distance - b.distance);
     const hit = hits[0];
@@ -342,9 +363,15 @@ export async function renderMeshes(container, data) {
       camera.position.lerpVectors(flight.from, flight.to, ease);
       if (t >= 1) flight = null;
     }
+    if (drawn && !drawn.done) drawn.done = drawn.update((now - born) / 1000);
+    if (pulse.length && !reducedMotion) {  // the tumor pulses gently in the illustrated view
+      const k = 0.35 + 0.15 * Math.sin(now / 500);
+      pulse.forEach((mat) => { mat.emissiveIntensity = hovered?.material === mat ? 3 : k / 0.35; });
+    }
     const fade = Math.min(1, (now - born) / 900);
     if (fade < 1 || handles[0]?.material.opacity === 0) {
       handles.forEach((m) => {
+        if (!m.material) return;  // drawn anatomy fades itself in
         if (m.material.uniforms) m.material.uniforms.strength.value = (m.userData.strength ?? 1) * fade;
         else m.material.opacity = m.userData.targetOpacity * fade;
         if (fade >= 1 && !m.material.uniforms) m.material.transparent = m.userData.targetOpacity < 1;

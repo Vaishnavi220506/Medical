@@ -208,7 +208,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v18.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v20.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
@@ -226,8 +226,23 @@ def mesh(sid: str):
         data["parts"]["tumor"] = {"what": BREAST_MRI_TUMOR[0], "effect": BREAST_MRI_TUMOR[1]}
         data["parts"]["glands"] = {"what": "Glandular tissue: the milk-producing lobules and the ducts that drain them (shown approximately, from how bright the tissue is on the MRI).",
                                    "effect": "Most breast cancers start in the cells lining these ducts and lobules; dense glandular tissue can also hide tumors on mammograms."}
-        data["parts"]["lobes"] = {"what": "Milk lobes (drawing): each breast has 15-20 lobes that make milk, joined by ducts that lead to the nipple. Drawn for orientation; MRI does not show single lobes.",
-                                  "effect": "Most breast cancers start in the ducts (ductal carcinoma) or in the lobules at the end of the lobes (lobular carcinoma)."}
+        drawing = "Drawn for orientation, not seen on this scan."
+        data["parts"].update({
+            "fat": {"what": f"Fatty tissue: most of the breast's volume, around the glands. {drawing}",
+                    "effect": "Tumors in fatty breasts are easier to see on mammograms than in dense, glandular breasts."},
+            "ducts": {"what": f"Milk ducts: tubes that carry milk from the lobes to the nipple. {drawing}",
+                      "effect": "About 8 in 10 breast cancers start in the cells lining the ducts (ductal carcinoma)."},
+            "lobules": {"what": f"Lobes and lobules: 15-20 lobes, each a cluster of small milk-making lobules. {drawing}",
+                        "effect": "About 1 in 10 breast cancers start here (lobular carcinoma)."},
+            "ligaments": {"what": f"Cooper's ligaments: thin bands that hold the breast's shape. {drawing}",
+                          "effect": "A tumor that pulls on them can dimple the skin, a sign doctors look for."},
+            "nipple": {"what": f"Nipple and areola: where the milk ducts open. {drawing}",
+                       "effect": "A tumor near the nipple can pull it inwards or cause discharge."},
+            "muscle": {"what": f"Pectoral (chest) muscle behind the breast. {drawing}",
+                       "effect": "If a tumor reaches this muscle, surgery and staging change; MRI checks for it."},
+            "lymph_nodes": {"what": f"Axillary lymph nodes: filters towards the armpit, where breast cancer spreads first. {drawing}",
+                            "effect": "Whether they are affected is checked by examination, ultrasound or biopsy; this view does not assess it."},
+        })
         data["parts"]["body"] = {"what": "Outline of the upper body, drawn for orientation. Only the breasts, glands and tumor come from this scan.",
                                  "effect": ""}
     if s["scan"]["is_volume"] and m.get("nodules"):

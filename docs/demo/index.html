@@ -72,7 +72,7 @@
     const CASES = {
       brain: { label: "Brain MRI", text: "A real glioma patient from BraTS 2023 that OncoVision's 3D model never saw in training, outlined from four MRI sequences into necrotic core, edema and active tumor.",
         data: "Data: BraTS 2023 (CC-BY-4.0). Cite: Baid U. et al., arXiv:2107.02314; Menze B. H. et al., IEEE TMI 34(10), 2015." },
-      breast: { label: "Breast MRI", text: "A real breast cancer patient from MAMA-MIA (Duke) that the breast MRI model never saw in training, outlined on a contrast-enhanced MRI showing both breasts. The breasts and the tumor come from the scan; the body and the pink milk lobes are drawn for orientation (the gland tissue seen on the MRI can be switched on in the list). The outline in the right breast is the cancer; the spot in the left breast is a false alarm by the model.",
+      breast: { label: "Breast MRI", text: "A real breast cancer patient from MAMA-MIA (Duke) that the breast MRI model never saw in training, outlined on a contrast-enhanced MRI showing both breasts. The tumor and the breasts' position and size come from the scan; the body and the breast anatomy (fat, ducts, lobules, ligaments, muscle, lymph nodes) are drawn for orientation (the gland tissue seen on the MRI can be switched on in the list). The outline in the right breast is the cancer; the spot in the left breast is a false alarm by the model.",
         data: "Data: MAMA-MIA (CC BY-NC 4.0, non-commercial). Cite: Garrucho L. et al., Scientific Data 12, 453 (2025)." },
       lung: { label: "Lung CT", text: "A real patient from LIDC-IDRI that the lung model never saw in training, with the nodules it found on the chest CT (experimental: the model finds about half of the nodules radiologists mark).",
         data: "Data: LIDC-IDRI (CC BY 3.0). Cite: Armato S. G. III et al., Medical Physics 38(2), 2011." },
@@ -99,7 +99,8 @@
       $("#three-msg").textContent = "";
       volumes = data.regions || {};
       $("#cut-label").textContent = `Cut away ${(data.anatomy_label || "outline").split(" ")[0].toLowerCase()}`;
-      $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
+      $("#mesh-toggles").classList.toggle("compact", data.meshes.length > 6);
+    $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
         const color = m.name === "anatomy" ? "103,232,249" : m.name === "body" ? "96,165,250" : m.color.join(",");
         const label = m.name === "anatomy" ? data.anatomy_label || "Outline" : m.description || m.name;
         const vol = volumes[m.name]?.volume_cm3 != null ? `<span class="vol">${(+volumes[m.name].volume_cm3).toFixed(1)} cm³</span>` : "";

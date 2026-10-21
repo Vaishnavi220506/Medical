@@ -474,6 +474,7 @@ async function load3D() {
       $("#three-warning").hidden = false;
     }
     const volumes = data.pseudo ? {} : Object.fromEntries((s.measurements.regions || []).map((r) => [r.name, r.volume_cm3]));
+    $("#mesh-toggles").classList.toggle("compact", data.meshes.length > 6);
     $("#mesh-toggles").innerHTML = data.meshes.map((m, i) => {
       const color = m.name === "anatomy" ? "103,232,249" : m.name === "body" ? "96,165,250" : m.color.join(",");
       const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
