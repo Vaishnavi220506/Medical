@@ -208,7 +208,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v14.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v15.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
@@ -224,6 +224,10 @@ def mesh(sid: str):
     data["type_note"] = type_note(s)
     if s["profile"]["key"] == "breast_mri":
         data["parts"]["tumor"] = {"what": BREAST_MRI_TUMOR[0], "effect": BREAST_MRI_TUMOR[1]}
+        data["parts"]["glands"] = {"what": "Glandular tissue: the milk-producing lobules and the ducts that drain them (shown approximately, from how bright the tissue is on the MRI).",
+                                   "effect": "Most breast cancers start in the cells lining these ducts and lobules; dense glandular tissue can also hide tumors on mammograms."}
+        data["parts"]["body"] = {"what": "Outline of the upper body, drawn for orientation. Only the breasts, glands and tumor come from this scan.",
+                                 "effect": ""}
     if s["scan"]["is_volume"] and m.get("nodules"):
         spacing = s["scan"]["spacing_mm"]
         dz, dy, dx = spacing or (1.0, 1.0, 1.0)  # same default as build_meshes

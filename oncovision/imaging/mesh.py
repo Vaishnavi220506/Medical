@@ -37,46 +37,173 @@ def _body(vol: np.ndarray) -> np.ndarray:
     return np.stack([ndimage.binary_fill_holes(s) for s in body])
 
 
-def _breasts(body: np.ndarray, sp) -> tuple[np.ndarray, str]:
-    """Breast MRI anatomy: both breasts as smooth domes on a thin, rounded base of chest wall.
-
-    ``body`` comes from _body. When the scan shows the whole chest (both breasts), the chest wall
-    is one row for the whole scan (median over axial slices of the first row, from the front,
-    where the body is nearly as wide as the torso). How far the breast tissue stands out in front
-    of it is a height map over the chest (slice x column); smoothing that map gives the breasts'
-    natural rounded surface without the ragged edges of fat and glands on MRI. Scans of one breast
-    only keep the whole scanned region.
-    """
-    if body.shape[2] * sp[2] < 280:  # one breast only (see measure.ONE_BREAST_FOV_MM)
-        return body, "Breast (scanned area)"
+def _chest_wall(body: np.ndarray) -> int | None:
+    """Row of the chest wall: median over axial slices of the first row (from the front, row 0)
+    where the body is nearly as wide as the torso."""
     walls = []
     for s in body:
         widths = s.sum(axis=1)
         if widths.max() > 0:
             walls.append(np.where(widths >= 0.85 * widths.max())[0][0])
-    if not walls:
-        return body, "Breast (scanned area)"
-    wall = int(np.median(walls))
+    return int(np.median(walls)) if walls else None
+
+
+def _head_first(vol: np.ndarray, body: np.ndarray, wall: int) -> bool:
+    """Whether the head end of a whole-chest scan is at slice 0, judged from the anatomy.
+
+    The standard (RAS) orientation puts the head end at the last slice, but some converted research
+    scans (e.g. the Duke cases of MAMA-MIA) store the slices the other way round. Behind the chest
+    wall on the patient's right, the foot end shows the liver (medium grey) and the head end the
+    lung (dark). Only a clear difference (1.4x) counts; otherwise the stored orientation is kept.
+    """
+    level = []
+    for z in range(body.shape[0]):
+        s = body[z]
+        if not s.any():
+            level.append(np.nan)
+            continue
+        cols = np.where(s.any(axis=0))[0]
+        region = s.copy()
+        region[: wall + 5] = False
+        region[:, (cols[0] + cols[-1]) // 2:] = False  # column 0 is the patient's right
+        region = ndimage.binary_erosion(region, iterations=3)
+        level.append(np.median(vol[z][region]) if region.sum() > 50 else np.nan)
+    level = np.array(level)
+    k = max(2, len(level) // 5)
+    if np.isnan(level[:k]).all() or np.isnan(level[-k:]).all():
+        return False
+    first, last = np.nanmean(level[:k]), np.nanmean(level[-k:])
+    return bool(last > 1.4 * first)
+
+
+def breast_head_first(volume: np.ndarray, spacing) -> bool:
+    """_head_first for a stored breast MRI volume (False for scans of one breast only)."""
+    if not spacing or volume.shape[0] < 8 or volume.shape[2] * spacing[2] < 280:
+        return False
+    factor = max(1, int(np.ceil(max(volume.shape) / MAX_DIM)))
+    vol = normalize(volume[::factor, ::factor, ::factor])
+    body = _body(vol)
+    wall = _chest_wall(body)
+    return wall is not None and _head_first(vol, body, wall)
+
+
+# Signed distance functions (mm) for the illustrated body: negative inside.
+def _sd_ellipsoid(p, center, radii, n=2.0):
+    q = np.abs((p - np.asarray(center)) / np.asarray(radii))
+    return ((q ** n).sum(-1) ** (1 / n) - 1) * min(radii)
+
+
+def _sd_capsule(p, a, b, r):
+    a, b = np.asarray(a, float), np.asarray(b, float)
+    pa, ba = p - a, b - a
+    h = np.clip((pa @ ba) / (ba @ ba), 0, 1)
+    return np.linalg.norm(pa - h[..., None] * ba, axis=-1) - r
+
+
+def _smin(a, b, k):
+    h = np.clip(0.5 + 0.5 * (b - a) / k, 0, 1)
+    return b * (1 - h) + a * h - k * h * (1 - h)
+
+
+def _torso_sdf(p: np.ndarray, k: float) -> np.ndarray:
+    """A female upper body (chest, abdomen, shoulders, neck, arms) in mm, scaled by k.
+
+    p is (..., 3) as (up, anterior, lateral) with the origin at the centre of the chest wall at
+    breast level. Proportions are those of an average adult woman; it is an illustration for
+    orientation, not anatomy from the scan.
+    """
+    d = _sd_ellipsoid(p, (30 * k, -100 * k, 0), (200 * k, 100 * k, 160 * k), 2.5)  # rib cage
+    d = _smin(d, _sd_ellipsoid(p, (-190 * k, -95 * k, 0), (170 * k, 90 * k, 135 * k)), 60 * k)  # abdomen
+    d = _smin(d, _sd_capsule(p, (185 * k, -100 * k, -150 * k), (185 * k, -100 * k, 150 * k), 55 * k), 40 * k)  # shoulders
+    d = _smin(d, _sd_capsule(p, (180 * k, -100 * k, 0), (330 * k, -90 * k, 0), 48 * k), 30 * k)  # neck
+    for side in (-1, 1):  # arms hanging at the sides
+        d = _smin(d, _sd_capsule(p, (165 * k, -100 * k, side * 180 * k), (-340 * k, -95 * k, side * 250 * k), 44 * k), 6 * k)
+    return d
+
+
+def _breast_figure(vol: np.ndarray, body: np.ndarray, lab: np.ndarray, sp) -> dict | None:
+    """Breast MRI showing the whole chest: the breasts, their glandular tissue and an illustrated
+    upper body around them, all in the scan's coordinates (mm).
+
+    The chest wall is one row for the whole scan (see _chest_wall). How far the breast tissue
+    stands out in front of it is a height map over the chest (slice x column); smoothing that map
+    gives the breasts' natural rounded surface without the ragged edges of fat and glands on MRI.
+    The body is placed with its chest wall on the scan's, its width matched to the patient's chest.
+    """
+    if body.shape[2] * sp[2] < 280:  # one breast only (see measure.ONE_BREAST_FOV_MM)
+        return None
+    wall = _chest_wall(body)
+    if wall is None:
+        return None
+    n, h, w = body.shape
     # Height of the tissue in front of the wall (mm), counted from the wall forward without gaps.
     height = body[:, :wall][:, ::-1].cumprod(axis=1).sum(axis=1) * sp[1]
     height = ndimage.gaussian_filter(height, (6 / sp[0], 6 / sp[2]))  # ~6 mm smoothing
     # Round off the breasts where the scan stops above and below them (instead of a flat cut).
-    n = body.shape[0]
     to_edge = np.minimum(np.arange(n), n - 1 - np.arange(n)) * sp[0]
-    t = np.clip(to_edge / 30.0, 0, 1)[:, None]  # zero at the scan's top and bottom, full 30 mm in
+    t = np.clip(to_edge / 30.0, 0, 1)[:, None]
     height *= np.sqrt(1 - (1 - t) ** 2)
-    # Thin chest-wall base where the body is, cut to a rounded (super-elliptic) outline.
-    chest = body[:, wall].copy()
-    zs, xs = np.nonzero(chest)
-    if zs.size:
-        zc, xc = (zs.min() + zs.max()) / 2, (xs.min() + xs.max()) / 2
-        rz, rx = (zs.max() - zs.min()) / 2 + 1, (xs.max() - xs.min()) / 2 + 1
-        zz, xx = np.ogrid[: chest.shape[0], : chest.shape[1]]
-        chest &= np.abs((zz - zc) / rz) ** 2.5 + np.abs((xx - xc) / rx) ** 2.5 <= 1
-    base = np.where(chest, 12.0, 0.0)  # mm: about the depth of the chest muscles
-    depth = (wall - np.arange(body.shape[1]))[None, :, None] * sp[1]  # mm in front of the wall (row axis)
-    breasts = (depth <= height[:, None, :]) & (depth >= -base[:, None, :]) & chest[:, None, :]
-    return (breasts, "Breasts") if breasts.sum() > 1000 else (body, "Breast (scanned area)")
+    if height.max() < 10:
+        return None
+
+    up = -1.0 if _head_first(vol, body, wall) else 1.0  # +1: the head end is at the last slice
+    chest_cols = np.where(body[:, wall].any(axis=0))[0]
+    if chest_cols.size < 2:
+        return None
+    centre_col = (chest_cols[0] + chest_cols[-1]) / 2
+    k = float(np.clip((chest_cols[-1] - chest_cols[0]) * sp[2] / 320, 0.8, 1.25))
+    level = int(np.argmax(height.max(axis=1)))  # slice where the breasts stand out most
+    origin = np.array([level * sp[0], wall * sp[1], centre_col * sp[2]])  # (slice, row, col) mm
+
+    def to_body(points):  # (slice, row, col) mm -> (up, anterior, lateral) mm
+        return np.stack([up * (points[..., 0] - origin[0]), origin[1] - points[..., 1], points[..., 2] - origin[2]], -1)
+
+    zz, rr, cc = np.meshgrid(np.arange(n) * sp[0], np.arange(h) * sp[1], np.arange(w) * sp[2], indexing="ij")
+    torso = _torso_sdf(to_body(np.stack([zz, rr, cc], -1)), k)
+
+    # The breasts: where the tissue clearly stands out (the chest's flanks in front of the wall
+    # line are left to the illustrated body), reaching back into the body.
+    depth = (wall - np.arange(h))[None, :, None] * sp[1]  # mm in front of the wall
+    domes = (depth <= height[:, None, :]) & (depth >= -60) & (height[:, None, :] > max(8.0, 0.2 * height.max()))
+    sd_breast = (ndimage.distance_transform_edt(~domes, sampling=sp) - ndimage.distance_transform_edt(domes, sampling=sp))
+    blend = 30 * k  # mm: how softly the breasts join the chest
+    breasts = (_smin(torso, sd_breast, blend) < 0) & (torso > -3)  # in front of the body, a little overlap
+    if breasts.sum() < 1000:
+        return None
+
+    # Body = illustrated torso joined smoothly with the patient's breasts.
+    step = 7.0 * k
+    ys, as_, xs = (np.arange(lo, hi, step) for lo, hi in ((-400 * k, 390 * k), (-230 * k, 120 * k), (-310 * k, 310 * k)))
+    grid = np.stack(np.meshgrid(ys, as_, xs, indexing="ij"), -1)
+    scan = np.stack([origin[0] + up * grid[..., 0], origin[1] - grid[..., 1], origin[2] + grid[..., 2]], -1)  # mm
+    idx = [scan[..., i] / sp[i] for i in range(3)]
+    sd_b = ndimage.map_coordinates(sd_breast.astype(np.float32), idx, order=1, mode="constant", cval=1e3)
+    sdf = _smin(_torso_sdf(grid, k), sd_b, blend)
+    figure = None
+    try:
+        verts, faces, _, _ = marching_cubes(-sdf, level=0.0, spacing=(step, step, step))
+        verts += np.array([ys[0], as_[0], xs[0]])
+        verts = np.stack([origin[0] + up * verts[:, 0], origin[1] - verts[:, 1], origin[2] + verts[:, 2]], -1)
+        figure = {"vertices": np.round(verts, 1).ravel().tolist(), "faces": faces.astype(int).ravel().tolist()}
+    except (ValueError, RuntimeError):
+        pass
+
+    # Glandular tissue: the brighter (fat-suppressed MRI) or darker (no fat suppression) class of
+    # breast tissue, away from the skin and outside the tumor. Approximate, from brightness alone.
+    from skimage.filters import threshold_otsu
+
+    inner = ndimage.binary_erosion(domes & breasts & body, iterations=2) & ~ndimage.binary_dilation(lab > 0, iterations=1)
+    glands = None
+    if inner.sum() > 500:
+        smooth = ndimage.gaussian_filter(vol, 0.7)
+        bright = smooth > threshold_otsu(smooth[inner])
+        glands = inner & (bright if bright[inner].mean() < 0.5 else ~bright)
+        glands &= height[:, None, :] > 0.4 * height.max()  # within the breasts, not the chest between them
+        comp, count = ndimage.label(glands)
+        if count:
+            sizes = ndimage.sum(glands, comp, range(1, count + 1))
+            glands = np.isin(comp, np.where(sizes >= 6)[0] + 1)
+    return {"breasts": breasts, "figure": figure, "glands": glands, "flip": up < 0}
 
 
 def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile, spacing) -> dict:
@@ -98,17 +225,40 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
     if lungs is not None and lungs.any():  # chest CT: show the lungs, not the outer body shell
         anatomy, out["anatomy_label"] = lungs, "Lungs"
     elif profile.organ == "breast":
-        anatomy, out["anatomy_label"] = _breasts(_body(vol), sp)
+        body = _body(vol)
+        figure = _breast_figure(vol, body, lab, sp)
+        if figure:
+            anatomy, out["anatomy_label"] = figure["breasts"], "Breasts"
+            out["flip_vertical"] = figure["flip"]  # the viewer turns the scene so the head is up
+        else:
+            anatomy, out["anatomy_label"] = body, "Breast (scanned area)"
     else:
         anatomy = ndimage.binary_fill_holes(np.stack([foreground_mask(s) for s in vol]))
         out["anatomy_label"] = "Brain / head" if profile.organ == "brain" else "Body outline"
     surface = _surface(anatomy, sp, step=2, sigma=2.5 if profile.organ == "breast" else 1.6)
     if surface:
         out["meshes"].append({"name": "anatomy", "color": [200, 200, 210], "opacity": 0.12, **surface})
+    if profile.organ == "breast" and figure:
+        if figure["figure"]:
+            out["meshes"].append({"name": "body", "description": "Body (illustration for orientation, not from the scan)",
+                                  "color": [96, 165, 250], "opacity": 0.1, **figure["figure"]})
+        surface = _surface(figure["glands"], sp, sigma=0.8) if figure["glands"] is not None else None
+        if surface:
+            out["meshes"].append({"name": "glands", "description": "Glandular tissue (approx., from image brightness)",
+                                  "color": [230, 170, 60], "opacity": 0.4, **surface})
     for lbl in profile.display_labels:
-        surface = _surface(lab == lbl.index, sp)
+        mask = lab == lbl.index
+        surface = _surface(mask, sp)
         if surface:
             out["meshes"].append({"name": lbl.name, "description": lbl.description, "color": list(lbl.color), "opacity": 0.9, **surface})
+            if profile.organ == "breast" and figure:  # one glow per tumor spot in the illustrated view
+                comp, count = ndimage.label(mask)
+                spots = []
+                for i, (sl, size) in enumerate(zip(ndimage.find_objects(comp), ndimage.sum(mask, comp, range(1, count + 1))), 1):
+                    centre = ndimage.center_of_mass(comp[sl] == i)
+                    mm = [(c + s_.start) * d for c, s_, d in zip(centre, sl, sp)]
+                    spots.append([round(v, 1) for v in mm] + [round(float((3 * size * np.prod(sp) / (4 * np.pi)) ** (1 / 3)), 1)])
+                out["meshes"][-1]["spots"] = spots  # (slice, row, col, radius) in mm
     return out
 
 

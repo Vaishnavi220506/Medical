@@ -16,8 +16,10 @@ export function disposeViewer() {
 const FRESNEL_VERTEX = `
   varying vec3 vNormal;
   varying vec3 vView;
+  varying float vHeight;
   #include <clipping_planes_pars_vertex>
   void main() {
+    vHeight = position.y;
     vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
     vNormal = normalize(normalMatrix * normal);
     vView = normalize(-mvPosition.xyz);
@@ -27,13 +29,21 @@ const FRESNEL_VERTEX = `
 const FRESNEL_FRAGMENT = `
   uniform vec3 glowColor;
   uniform float strength;
+  uniform float fill;
+  uniform vec3 fade; // (lowest y, highest y, fade length): fade out towards both ends; length 0 = off
   varying vec3 vNormal;
   varying vec3 vView;
+  varying float vHeight;
   #include <clipping_planes_pars_fragment>
   void main() {
     #include <clipping_planes_fragment>
     float rim = pow(1.0 - abs(dot(normalize(vNormal), normalize(vView))), 2.2);
-    gl_FragColor = vec4(glowColor, clamp(rim * strength + 0.02, 0.0, 1.0));
+    float alpha = clamp(rim * strength + fill, 0.0, 1.0);
+    if (fade.z > 0.0) {
+      float y = vHeight;
+      alpha *= smoothstep(min(fade.x, fade.y), min(fade.x, fade.y) + fade.z, y) * (1.0 - smoothstep(max(fade.x, fade.y) - fade.z, max(fade.x, fade.y), y));
+    }
+    gl_FragColor = vec4(glowColor, alpha);
   }`;
 
 // Per sub-region look: edema is translucent so the core inside stays visible.
@@ -41,7 +51,23 @@ const STYLE = {
   edema: { opacity: 0.38, roughness: 0.5, renderOrder: 3 },
   enhancing_tumor: { opacity: 0.88, roughness: 0.28, renderOrder: 2 },
   necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
+  glands: { opacity: 0.4, roughness: 0.8, renderOrder: 1 },  // drawn first: the tumor shows through
 };
+
+// Soft round glow texture for tumors in the illustrated body view.
+function glowTexture(THREE) {
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const g = c.getContext("2d");
+  const grad = g.createRadialGradient(64, 64, 0, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.2, "rgba(255,255,255,0.85)");
+  grad.addColorStop(0.45, "rgba(255,255,255,0.35)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(c);
+}
 
 export async function renderMeshes(container, data) {
   disposeViewer();
@@ -61,7 +87,6 @@ export async function renderMeshes(container, data) {
   container.appendChild(renderer.domElement);
 
   const scene = new THREE.Scene();
-  scene.fog = new THREE.Fog(0x050914, 400, 900);
   const camera = new THREE.PerspectiveCamera(35, width / height, 1, 5000);
 
   // Studio lighting: soft sky/ground fill, warm key, cool fill, rim light from behind.
@@ -75,32 +100,48 @@ export async function renderMeshes(container, data) {
   scene.add(key, fill, rim);
 
   // Vertices arrive as (slice, row, col) in mm: map to x = patient left, y = superior, z = anterior.
+  // Some scans store the slices from head to feet (flip_vertical): mirror them so the head is up.
+  const ySign = data.flip_vertical ? -1 : 1;
   const toGeometry = (m) => {
     const v = m.vertices;
     const pos = new Float32Array(v.length);
     for (let i = 0; i < v.length; i += 3) {
       pos[i] = v[i + 2];
-      pos[i + 1] = v[i];
+      pos[i + 1] = ySign * v[i];
       pos[i + 2] = -v[i + 1];
     }
     const g = new THREE.BufferGeometry();
     g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    g.setIndex(m.faces);
+    let faces = m.faces;
+    if (ySign < 0) {  // a mirror turns triangles inside out: restore their winding (and normals)
+      faces = faces.slice();
+      for (let i = 0; i < faces.length; i += 3) [faces[i + 1], faces[i + 2]] = [faces[i + 2], faces[i + 1]];
+    }
+    g.setIndex(faces);
     g.computeVertexNormals();
     return g;
   };
 
   const group = new THREE.Group();
+  const figure = data.meshes.some((m) => m.name === "body");
   const cutPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 1e6);
   const handles = [];
   for (const m of data.meshes) {
     const geometry = toGeometry(m);
     let mesh;
     if (m.name === "anatomy" || m.name === "body") {
-      // The organ glows cyan; the surrounding body outline is a fainter lavender shell.
+      // The organ glows cyan; the illustrated body around it is a translucent blue skin that
+      // fades out at the neck and below the chest.
       const body = m.name === "body";
+      geometry.computeBoundingBox();
+      const bb = geometry.boundingBox;
       const material = new THREE.ShaderMaterial({
-        uniforms: { glowColor: { value: new THREE.Color(body ? 0xa5b4fc : 0x67e8f9) }, strength: { value: body ? 0.45 : 1.0 } },
+        uniforms: {
+          glowColor: { value: new THREE.Color(body ? 0x60a5fa : figure ? 0x7dd3fc : 0x67e8f9) },
+          strength: { value: body ? 0.75 : figure ? 0.22 : 1.0 },
+          fill: { value: body ? 0.05 : 0.02 },
+          fade: { value: new THREE.Vector3(bb.min.y, bb.max.y, body ? (bb.max.y - bb.min.y) * 0.16 : 0) },
+        },
         vertexShader: FRESNEL_VERTEX,
         fragmentShader: FRESNEL_FRAGMENT,
         transparent: true,
@@ -112,7 +153,7 @@ export async function renderMeshes(container, data) {
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = body ? 11 : 10;
-      mesh.userData.strength = body ? 0.45 : 1.0;
+      mesh.userData.strength = body ? 0.75 : figure ? 0.22 : 1.0;
     } else {
       const style = STYLE[m.name] || { opacity: m.opacity ?? 0.9, roughness: 0.35, renderOrder: m.opacity < 0.5 ? 4 : 2 };
       const color = new THREE.Color(`rgb(${m.color.join(",")})`);
@@ -120,11 +161,12 @@ export async function renderMeshes(container, data) {
         color,
         roughness: style.roughness,
         metalness: 0.05,
-        clearcoat: 0.8,
+        clearcoat: m.name === "glands" ? 0 : 0.8,
         clearcoatRoughness: 0.25,
         sheen: 0.4,
         sheenColor: color.clone().offsetHSL(0, 0, 0.2),
-        emissive: color.clone().multiplyScalar(0.12),
+        // In the illustrated body view the tumor glows orange, as in medical illustrations.
+        emissive: figure ? (m.name === "glands" ? color.clone().multiplyScalar(0.25) : new THREE.Color(0xff5a1f).multiplyScalar(0.8)) : color.clone().multiplyScalar(0.12),
         transparent: style.opacity < 1,
         opacity: style.opacity,
         depthWrite: style.opacity >= 1,
@@ -132,6 +174,22 @@ export async function renderMeshes(container, data) {
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = style.renderOrder;
+      if (figure && m.spots) {
+        // Tumor: a warm glow around each spot, as in medical illustrations.
+        const texture = glowTexture(THREE);
+        for (const [sl, row, col, radius] of m.spots) {
+          const halo = new THREE.Sprite(new THREE.SpriteMaterial({
+            map: texture, color: 0xff6a00, transparent: true, opacity: 1.0,
+            blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
+          }));
+          halo.position.set(col, ySign * sl, -row);
+          const r = Math.max(radius * 7, 45);
+          halo.scale.set(r, r, 1);
+          halo.renderOrder = 20;
+          halo.raycast = () => {};
+          mesh.add(halo);
+        }
+      }
     }
     mesh.userData.targetOpacity = mesh.material.opacity ?? 1;
     mesh.userData.name = m.name;
@@ -145,6 +203,7 @@ export async function renderMeshes(container, data) {
   group.position.sub(center);
   scene.add(group);
   const radius = size.length() / 2;
+  scene.fog = new THREE.Fog(0x050914, radius * 2.4, radius * 6);  // far parts fade, scaled to the scene
 
   // Floor grid that fades into the background.
   const grid = new THREE.PolarGridHelper(radius * 1.6, 12, 6, 64, 0x1e3a5f, 0x13233d);
@@ -218,7 +277,7 @@ export async function renderMeshes(container, data) {
       if (index == null) { sliceMesh.visible = false; return; }
       sliceMesh.visible = true;
       const [cx, cz] = data.slice_plane?.center_xz || [center.x, center.z];
-      sliceMesh.position.set(cx, index * voxel[0], cz);
+      sliceMesh.position.set(cx, ySign * index * voxel[0], cz);
     },
     onHover: null, // ({name, point, dir, clientX, clientY}) in data coordinates (mm), or null
     screenshot: () => renderer.domElement.toDataURL("image/png"),
@@ -261,8 +320,8 @@ export async function renderMeshes(container, data) {
     if (!hit) { viewer.onHover(null); return; }
     viewer.onHover({
       name: hit.object.userData.name,
-      point: group.worldToLocal(hit.point.clone()).toArray(),
-      dir: raycaster.ray.direction.toArray(),
+      point: group.worldToLocal(hit.point.clone()).multiply(new THREE.Vector3(1, ySign, 1)).toArray(),  // data coordinates
+      dir: raycaster.ray.direction.clone().multiply(new THREE.Vector3(1, ySign, 1)).toArray(),
       clientX: pointer.x,
       clientY: pointer.y,
     });

@@ -129,3 +129,35 @@ def test_pseudo_3d_inflation():
     lab[0][(yy - 64) ** 2 + (xx - 64) ** 2 <= 15**2] = 4
     out = build_pseudo_meshes(img, lab, PROFILES["brain_mri"], (1.0, 0.5, 0.5))
     assert out["pseudo"] and [m["name"] for m in out["meshes"]] == ["anatomy", "possible_extent", "tumor"]
+
+
+def _chest(liver_at_end: bool) -> np.ndarray:
+    """Synthetic whole-chest breast MRI (40 x 128 x 140, 4 x 2.5 x 2.5 mm): torso, two breasts,
+    dark lungs, and optionally a liver (medium grey) on the patient's right at the last slices."""
+    z, r, c = np.ogrid[:40, :128, :140]
+    vol = np.zeros((40, 128, 140), np.float32)
+    vol[:] = np.where(((r - 90) / 30.0) ** 2 + ((c - 70) / 65.0) ** 2 <= 1, 0.3, 0)  # torso
+    for col in (38, 102):  # breasts in front of the chest wall
+        vol[((z - 20) * 4 / 60.0) ** 2 + ((r - 66) / 14.0) ** 2 + ((c - col) / 20.0) ** 2 <= 1] = 0.3
+    vol[:, 88:110, 20:62] = vol[:, 88:110, 78:120] = 0.02  # lungs
+    if liver_at_end:
+        vol[30:, 88:115, 15:65] = 0.6
+    return vol
+
+
+def test_breast_figure_and_head_end():
+    from oncovision.imaging.mesh import breast_head_first, build_meshes
+
+    profile = get_profile("breast_mri")
+    labels = np.zeros((40, 128, 140), np.uint8)
+    labels[16:24, 58:72, 32:44] = 1
+    for liver, expected in ((False, False), (True, True)):
+        vol = _chest(liver)
+        assert breast_head_first(vol, (4.0, 2.5, 2.5)) is expected
+        data = build_meshes(vol, labels, profile, (4.0, 2.5, 2.5))
+        names = [m["name"] for m in data["meshes"]]
+        assert data["anatomy_label"] == "Breasts" and "body" in names and data["flip_vertical"] is expected
+        assert next(m for m in data["meshes"] if m["name"] == "tumor")["spots"]
+    # One breast only (narrow scan): no illustrated body, no flip.
+    narrow = build_meshes(_chest(True)[:, :, :100], labels[:, :, :100], profile, (4.0, 2.5, 2.5))
+    assert "body" not in [m["name"] for m in narrow["meshes"]] and "flip_vertical" not in narrow

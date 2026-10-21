@@ -17,6 +17,7 @@ from scipy import ndimage
 
 from ..imaging.lung import lung_mask
 from ..imaging.measure import ONE_BREAST_FOV_MM
+from ..imaging.mesh import breast_head_first
 from ..imaging.preprocess import foreground_mask, normalize
 from ..models.registry import get_profile
 
@@ -102,6 +103,13 @@ def _distance_map(sid: str, version: str, spacing: tuple[float, float, float] | 
     return dist.astype(np.float32), step
 
 
+@lru_cache(maxsize=8)
+def _head_first(sid: str, version: str, spacing: tuple[float, float, float] | None) -> bool:
+    """Whether this breast MRI stores its slices from the head end (see mesh.breast_head_first)."""
+    _, base, _ = _context(sid, version)
+    return breast_head_first(base, spacing)
+
+
 @lru_cache(maxsize=2)  # a couple of studies; large CT arrays are hundreds of MB each
 def _organ(sid: str, version: str, organ: str):
     """Organ mask and its bounding box (slices, rows, cols), for locating areas."""
@@ -140,7 +148,8 @@ def _brain_area(z: float, r: float, c: float, box, is_3d: bool) -> str:
     return "parietal lobe"
 
 
-def _area(profile, z: float, r: float, c: float, box, is_3d: bool, width_mm: float | None = None) -> tuple[str, str]:
+def _area(profile, z: float, r: float, c: float, box, is_3d: bool, width_mm: float | None = None,
+          head_first: bool = False) -> tuple[str, str]:
     """(area name, what it does) for a point inside the organ."""
     if box is None:
         return "this area", ""
@@ -172,7 +181,7 @@ def _area(profile, z: float, r: float, c: float, box, is_3d: bool, width_mm: flo
     outer = abs(_frac(c, half) - (0.0 if side == "right" else 1.0)) < 0.4  # far from the midline
     if not is_3d:  # an axial image shows front-back, not up-down, so only the half is known
         return f"{side} breast, {'outer' if outer else 'inner'} half (approx.)", "breast tissue: milk glands, ducts and fat"
-    vertical = "upper" if _frac(z, box[0]) > 0.5 else "lower"
+    vertical = "upper" if (_frac(z, box[0]) > 0.5) != head_first else "lower"
     q = f"{vertical} {'outer' if outer else 'inner'}"
     return f"{side} breast, {q} quadrant (approx.)", BREAST_QUADRANTS[q]
 
@@ -224,7 +233,8 @@ def explain_point(study: dict, version: str, z: int, r: int, c: int) -> dict:
         out.update({"kind": "outside", "title": "Outside the brain", "what": "Skull, scalp or background.", "effect": ""})
         return out
     width_mm = cmax * spacing[2] if spacing else None
-    name, function = _area(profile, z, r, c, box, is_3d, width_mm)
+    head_first = profile.key == "breast_mri" and is_3d and _head_first(study["id"], version, spacing)
+    name, function = _area(profile, z, r, c, box, is_3d, width_mm, head_first)
     lobe = profile.organ == "brain" and is_3d
     out.update({"kind": "area", "title": name[0].upper() + name[1:], "what": f"Responsible for {function}." if function and lobe else (function[0].upper() + function[1:] + "." if function else "")})
     dist, step = _distance_map(study["id"], version, spacing)
