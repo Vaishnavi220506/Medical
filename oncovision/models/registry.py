@@ -160,7 +160,7 @@ PROFILES: dict[str, CancerProfile] = {
             "malignant": "Nodule with malignant features",
         },
         normal_class="normal",
-        seg_labels=(SegLabel(1, "nodule", (16, 185, 129), "Lung nodule"),),
+        seg_labels=(SegLabel(1, "nodule", (249, 115, 22), "Lung nodule"),),
         seg_size=256,  # nodules are small, so segment at a higher resolution
         lesion_polarity="bright",
         intensity_window=(-1000.0, 400.0),  # lung window

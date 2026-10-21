@@ -51,7 +51,9 @@ const STYLE = {
   edema: { opacity: 0.38, roughness: 0.5, renderOrder: 3 },
   enhancing_tumor: { opacity: 0.88, roughness: 0.28, renderOrder: 2 },
   necrotic_core: { opacity: 1.0, roughness: 0.45, renderOrder: 1 },
+  nodule: { opacity: 1.0, roughness: 0.35, renderOrder: 1 },  // solid and glossy, like the brain tumor parts
   glands: { opacity: 0.4, roughness: 0.8, renderOrder: 1 },  // drawn first: the tumor shows through
+  lobes: { opacity: 0.8, roughness: 0.7, renderOrder: 1 },
 };
 
 // Soft round glow texture for tumors in the illustrated body view.
@@ -138,8 +140,8 @@ export async function renderMeshes(container, data) {
       const material = new THREE.ShaderMaterial({
         uniforms: {
           glowColor: { value: new THREE.Color(body ? 0x60a5fa : figure ? 0x7dd3fc : 0x67e8f9) },
-          strength: { value: body ? 0.75 : figure ? 0.22 : 1.0 },
-          fill: { value: body ? 0.05 : 0.02 },
+          strength: { value: body ? 0.8 : figure ? 0.06 : 1.0 },  // breasts: shown by the body's own skin
+          fill: { value: body ? 0.07 : figure ? 0.0 : 0.02 },
           fade: { value: new THREE.Vector3(bb.min.y, bb.max.y, body ? (bb.max.y - bb.min.y) * 0.16 : 0) },
         },
         vertexShader: FRESNEL_VERTEX,
@@ -153,7 +155,7 @@ export async function renderMeshes(container, data) {
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = body ? 11 : 10;
-      mesh.userData.strength = body ? 0.75 : figure ? 0.22 : 1.0;
+      mesh.userData.strength = body ? 0.8 : figure ? 0.06 : 1.0;
     } else {
       const style = STYLE[m.name] || { opacity: m.opacity ?? 0.9, roughness: 0.35, renderOrder: m.opacity < 0.5 ? 4 : 2 };
       const color = new THREE.Color(`rgb(${m.color.join(",")})`);
@@ -161,12 +163,13 @@ export async function renderMeshes(container, data) {
         color,
         roughness: style.roughness,
         metalness: 0.05,
-        clearcoat: m.name === "glands" ? 0 : 0.8,
+        clearcoat: m.name === "glands" ? 0 : m.name === "lobes" ? 0.3 : 0.8,
         clearcoatRoughness: 0.25,
-        sheen: 0.4,
+        sheen: m.name === "lobes" ? 0 : 0.4,
         sheenColor: color.clone().offsetHSL(0, 0, 0.2),
         // In the illustrated body view the tumor glows orange, as in medical illustrations.
-        emissive: figure ? (m.name === "glands" ? color.clone().multiplyScalar(0.25) : new THREE.Color(0xff5a1f).multiplyScalar(0.8)) : color.clone().multiplyScalar(0.12),
+        // Tumors with a glow (illustrated breast view) light up orange-red.
+        emissive: m.spots ? new THREE.Color(0xff3d00).multiplyScalar(0.35) : color.clone().multiplyScalar(m.name === "lobes" ? 0.08 : 0.12),
         transparent: style.opacity < 1,
         opacity: style.opacity,
         depthWrite: style.opacity >= 1,
@@ -174,12 +177,12 @@ export async function renderMeshes(container, data) {
       });
       mesh = new THREE.Mesh(geometry, material);
       mesh.renderOrder = style.renderOrder;
-      if (figure && m.spots) {
+      if (m.spots) {
         // Tumor: a warm glow around each spot, as in medical illustrations.
         const texture = glowTexture(THREE);
         for (const [sl, row, col, radius] of m.spots) {
           const halo = new THREE.Sprite(new THREE.SpriteMaterial({
-            map: texture, color: 0xff6a00, transparent: true, opacity: 1.0,
+            map: texture, color: 0xff5500, transparent: true, opacity: 1.0,
             blending: THREE.AdditiveBlending, depthWrite: false, depthTest: false,
           }));
           halo.position.set(col, ySign * sl, -row);
@@ -192,6 +195,7 @@ export async function renderMeshes(container, data) {
       }
     }
     mesh.userData.targetOpacity = mesh.material.opacity ?? 1;
+    mesh.visible = !m.hidden;
     mesh.userData.name = m.name;
     group.add(mesh);
     handles.push(mesh);
@@ -295,7 +299,9 @@ export async function renderMeshes(container, data) {
     pointer = { x: e.clientX, y: e.clientY, buttons: e.buttons };
   });
   renderer.domElement.addEventListener("pointerleave", () => { pointer = null; setHover(null); viewer.onHover?.(null); });
-  const rank = (name) => ({ body: 3, anatomy: 2, possible_extent: 1 })[name] ?? 0;
+  // Tumor parts first, then the organ area (explained like the brain: which part, how far the
+  // tumor is), then the drawn milk lobes / scan glands, then the illustrated body.
+  const rank = (name) => ({ body: 4, lobes: 3, glands: 3, anatomy: 2, possible_extent: 1 })[name] ?? 0;
   const glow = (mesh, on) => {
     if (!mesh) return;
     if (mesh.material.uniforms) mesh.material.uniforms.strength.value = (mesh.userData.strength ?? 1) * (on ? 1.8 : 1.0);

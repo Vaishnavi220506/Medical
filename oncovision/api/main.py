@@ -208,7 +208,7 @@ def panel_png(sid: str, slice: int | None = None, layers: str = "original,overla
 @app.get("/api/studies/{sid}/mesh")
 def mesh(sid: str):
     s = _study(sid)
-    cache = settings.data_dir / "studies" / sid / "mesh_v15.json"
+    cache = settings.data_dir / "studies" / sid / "mesh_v18.json"
     if cache.exists():
         return Response(cache.read_text(), media_type="application/json")
     arrays = get_store().arrays(sid)
@@ -226,6 +226,8 @@ def mesh(sid: str):
         data["parts"]["tumor"] = {"what": BREAST_MRI_TUMOR[0], "effect": BREAST_MRI_TUMOR[1]}
         data["parts"]["glands"] = {"what": "Glandular tissue: the milk-producing lobules and the ducts that drain them (shown approximately, from how bright the tissue is on the MRI).",
                                    "effect": "Most breast cancers start in the cells lining these ducts and lobules; dense glandular tissue can also hide tumors on mammograms."}
+        data["parts"]["lobes"] = {"what": "Milk lobes (drawing): each breast has 15-20 lobes that make milk, joined by ducts that lead to the nipple. Drawn for orientation; MRI does not show single lobes.",
+                                  "effect": "Most breast cancers start in the ducts (ductal carcinoma) or in the lobules at the end of the lobes (lobular carcinoma)."}
         data["parts"]["body"] = {"what": "Outline of the upper body, drawn for orientation. Only the breasts, glands and tumor come from this scan.",
                                  "effect": ""}
     if s["scan"]["is_volume"] and m.get("nodules"):

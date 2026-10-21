@@ -478,7 +478,7 @@ async function load3D() {
       const color = m.name === "anatomy" ? "103,232,249" : m.name === "body" ? "96,165,250" : m.color.join(",");
       const label = m.name === "anatomy" ? (data.pseudo ? "Outline of the scanned area" : data.anatomy_label || "Brain / head") : m.description || m.name;
       const vol = volumes[m.name] != null ? `<span class="vol">${(+volumes[m.name]).toFixed(1)} cm³</span>` : "";
-      return `<label class="legend-chip"><input type="checkbox" data-mesh="${i}" checked><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
+      return `<label class="legend-chip${m.hidden ? " off" : ""}"><input type="checkbox" data-mesh="${i}" ${m.hidden ? "" : "checked"}><span class="dot" style="background:rgb(${color});color:rgb(${color})"></span>${esc(label)}${vol}</label>`;
     }).join("");
     $("#three-cut-label").textContent = data.pseudo ? "Cut away outline" : `Cut away ${(data.anatomy_label || "brain").split(" ")[0].toLowerCase()}`;
     $("#three-slice").disabled = !!data.pseudo;
@@ -550,7 +550,7 @@ function explain3D(s, data, hit) {
   if (hit.name !== "anatomy" && part) {
     const meshInfo = data.meshes.find((m) => m.name === hit.name) || {};
     const info = { kind: "tumor", title: meshInfo.description || hit.name, what: part.what, effect: part.effect, color: meshInfo.color,
-      type_note: ["possible_extent", "glands", "body"].includes(hit.name) ? null : data.type_note };
+      type_note: ["possible_extent", "glands", "lobes", "body"].includes(hit.name) ? null : data.type_note };
     const region = data.regions?.[hit.name];
     if (region?.volume_cm3 != null) info.size = `${(+region.volume_cm3).toFixed(1)} cm³ (${region.percent_of_tumor}% of the tumor)`;
     if (data.nodules?.length) {

@@ -203,7 +203,69 @@ def _breast_figure(vol: np.ndarray, body: np.ndarray, lab: np.ndarray, sp) -> di
         if count:
             sizes = ndimage.sum(glands, comp, range(1, count + 1))
             glands = np.isin(comp, np.where(sizes >= 6)[0] + 1)
-    return {"breasts": breasts, "figure": figure, "glands": glands, "flip": up < 0}
+    lobes = _milk_lobes(breasts, wall, centre_col, sp)
+    return {"breasts": breasts, "figure": figure, "glands": glands, "lobes": lobes, "flip": up < 0}
+
+
+def _milk_lobes(breasts: np.ndarray, wall: int, centre_col: float, sp) -> dict | None:
+    """Illustrated milk lobes in each breast: petal-shaped lobes fanning out from the nipple
+    towards the chest, as in anatomy drawings (MRI cannot show single lobes). In mm, (slice, row, col).
+    """
+    sd = ndimage.distance_transform_edt(~breasts, sampling=sp) - ndimage.distance_transform_edt(breasts, sampling=sp)
+    verts_all, faces_all, offset = [], [], 0
+    cols = np.arange(breasts.shape[2])
+    for side in (cols < centre_col, cols >= centre_col):
+        dome = breasts & side[None, None, :]
+        if dome.sum() < 200:
+            continue
+        idx = np.argwhere(dome) * np.asarray(sp)  # mm
+        front = idx[idx[:, 1] <= idx[:, 1].min() + 3 * sp[1]]
+        nipple = front.mean(axis=0)
+        base = idx[idx[:, 1] >= (wall - 2) * sp[1]]
+        base = base.mean(axis=0) if len(base) else idx.mean(axis=0)
+        axis = base - nipple
+        length = np.linalg.norm(axis)
+        if length < 15:
+            continue
+        axis /= length
+        u = np.cross(axis, [0, 0, 1.0])
+        u = u / np.linalg.norm(u) if np.linalg.norm(u) > 1e-6 else np.array([1.0, 0, 0])
+        v = np.cross(axis, u)
+        footprint = dome.any(axis=1).sum() * sp[0] * sp[2]  # mm^2 seen from the front
+        radius = 0.62 * np.sqrt(footprint / np.pi)
+        n = 14
+        segments = []
+        for i in range(n):
+            phi = 2 * np.pi * (i + 0.5 * (side[0])) / n
+            out = u * np.cos(phi) + v * np.sin(phi)
+            start = nipple + axis * 0.08 * length + out * 0.04 * radius
+            end = nipple + axis * 0.5 * length + out * radius
+            segments.append((start, end))
+        tip = max(4.0, 0.9 * np.pi * radius / n)
+        step = 2.0
+        lo = idx.min(axis=0) - 4
+        hi = idx.max(axis=0) + 4
+        axes_ = [np.arange(a, b, step) for a, b in zip(lo, hi)]
+        grid = np.stack(np.meshgrid(*axes_, indexing="ij"), -1)
+        d = np.full(grid.shape[:3], 1e3, np.float32)
+        for a, b in segments:
+            ba = b - a
+            t = np.clip(((grid - a) @ ba) / (ba @ ba), 0, 1)
+            dist = np.linalg.norm(grid - a - t[..., None] * ba, axis=-1)
+            d = np.minimum(d, dist - (1.5 + (tip - 1.5) * np.sin(np.pi * np.clip(t, 0, 1) * 0.62)))  # petal: thin at the nipple
+        inside = ndimage.map_coordinates(sd.astype(np.float32), [grid[..., i] / sp[i] for i in range(3)], order=1, mode="constant", cval=1e3)
+        d = np.maximum(d, inside + 4)  # keep 4 mm inside the skin
+        try:
+            verts, faces, _, _ = marching_cubes(-d, level=0.0, spacing=(step,) * 3)
+        except (ValueError, RuntimeError):
+            continue
+        verts_all.append(verts + lo)
+        faces_all.append(faces + offset)
+        offset += len(verts)
+    if not verts_all:
+        return None
+    return {"vertices": np.round(np.concatenate(verts_all), 1).ravel().tolist(),
+            "faces": np.concatenate(faces_all).astype(int).ravel().tolist()}
 
 
 def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile, spacing) -> dict:
@@ -242,10 +304,13 @@ def build_meshes(volume: np.ndarray, labels: np.ndarray, profile: CancerProfile,
         if figure["figure"]:
             out["meshes"].append({"name": "body", "description": "Body (illustration for orientation, not from the scan)",
                                   "color": [96, 165, 250], "opacity": 0.1, **figure["figure"]})
+        if figure["lobes"]:
+            out["meshes"].append({"name": "lobes", "description": "Milk lobes (illustration)",
+                                  "color": [236, 140, 170], "opacity": 0.85, **figure["lobes"]})
         surface = _surface(figure["glands"], sp, sigma=0.8) if figure["glands"] is not None else None
-        if surface:
-            out["meshes"].append({"name": "glands", "description": "Glandular tissue (approx., from image brightness)",
-                                  "color": [230, 170, 60], "opacity": 0.4, **surface})
+        if surface:  # off at first: the illustrated lobes are shown instead
+            out["meshes"].append({"name": "glands", "description": "Glandular tissue from the scan (approx., from image brightness)",
+                                  "color": [230, 170, 60], "opacity": 0.4, "hidden": True, **surface})
     for lbl in profile.display_labels:
         mask = lab == lbl.index
         surface = _surface(mask, sp)

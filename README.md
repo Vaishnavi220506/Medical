@@ -105,8 +105,8 @@ For comparison, strong published BraTS methods reach roughly 0.90-0.93 / 0.85-0.
 
 | Brain MRI (BraTS 2023) | Breast MRI (MAMA-MIA, Duke) | Lung CT (LIDC-IDRI) |
 |---|---|---|
-| ![Brain: glowing brain, necrotic core (red), active tumor (blue), edema (yellow)](docs/results/3d_view.gif) | ![Breast: see-through upper body, glandular tissue in gold, the cancer glowing in the right breast and a false alarm in the left](docs/results/3d_breast.gif) | ![Lungs with a 2.7 cm nodule in the right lung](docs/results/3d_lung.gif) |
-| Necrotic core, edema and active tumor, outlined from four MRI sequences | The patient's breasts, glands (gold) and the cancer (glowing, right breast) in an illustrated body; the spot in the left breast (9.6 cm³) is a false alarm by the model | A 2.7 cm nodule in the right lung, found with no false alarms |
+| ![Brain: glowing brain, necrotic core (red), active tumor (blue), edema (yellow)](docs/results/3d_view.gif) | ![Breast: see-through upper body, milk lobes in pink, the cancer glowing in the right breast and a false alarm in the left](docs/results/3d_breast.gif) | ![Lungs with a 2.7 cm nodule (orange) in the right lung](docs/results/3d_lung.gif) |
+| Necrotic core, edema and active tumor, outlined from four MRI sequences | The patient's breasts and the cancer (glowing, right breast) in an illustrated body with drawn milk lobes (pink; the gland tissue seen on the MRI can be switched on); the spot in the left breast (9.6 cm³) is a false alarm by the model | The nodule the model found (orange, 2.7 cm, right lung), with no false alarms |
 
 ### Individual models
 
